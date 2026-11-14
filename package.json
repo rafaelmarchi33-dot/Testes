@@ -1,0 +1,15 @@
+{
+  "name": "mercado-livre-intelligence",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Plataforma de gestão comercial, IA e automação de vendas para lojas no Mercado Livre",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix web install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix server start",
+    "test": "npm --prefix server test",
+    "typecheck": "npm --prefix server run typecheck && cd web && npx tsc -p ."
+  }
+}

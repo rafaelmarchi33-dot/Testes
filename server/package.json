@@ -10,9 +10,7 @@
     "dev": "node --watch --disable-warning=ExperimentalWarning src/index.ts",
     "start": "node --disable-warning=ExperimentalWarning src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
-    "backup": "node --disable-warning=ExperimentalWarning src/scripts/backup.ts",
-    "create-admin": "node --disable-warning=ExperimentalWarning src/scripts/create-admin.ts"
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
