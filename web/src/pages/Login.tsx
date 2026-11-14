@@ -19,7 +19,7 @@ export default function Login({ needsSetup, onDone }: { needsSetup: boolean; onD
     <div className="grid min-h-full lg:grid-cols-2">
       <div className="carbon relative hidden overflow-hidden lg:flex flex-col items-center justify-center gap-10 p-12 text-cream">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(242,106,27,0.18),transparent_60%)]" />
-        <img src="/brand/mind2matter-emblem.webp" alt="Mind2Matter 3D Printing" className="relative w-full max-w-[420px] rounded-2xl shadow-[0_30px_80px_-20px_rgba(242,106,27,0.45)]" />
+        <M2Mark large className="relative w-full max-w-[380px] drop-shadow-[0_20px_60px_rgba(242,106,27,0.35)]" />
         <div className="relative max-w-md text-center">
           <div className="filament mx-auto mb-5 w-40" />
           <h2 className="text-3xl font-semibold leading-tight tracking-tight">Da ideia à peça. Da peça à venda.</h2>
@@ -29,7 +29,7 @@ export default function Login({ needsSetup, onDone }: { needsSetup: boolean; onD
       </div>
       <div className="flex items-center justify-center p-6">
         <form onSubmit={submit} className="w-full max-w-sm space-y-4">
-          <div className="lg:hidden mb-2"><M2Mark className="size-12" /></div>
+          <div className="lg:hidden mb-2 flex justify-center"><M2Mark large className="size-36" /></div>
           <div>
             <h1 className="text-2xl font-semibold">{needsSetup ? "Configuração inicial" : "Entrar"}</h1>
             <p className="mt-1 text-sm text-ink-2">{needsSetup ? "Crie a conta de administrador da plataforma." : "Acesse o painel da sua loja."}</p>

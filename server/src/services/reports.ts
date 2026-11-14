@@ -1,4 +1,7 @@
 import ExcelJS from "exceljs";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import { q, json } from "../db/index.ts";
 import { resolvePeriod, localDate, type Range } from "../lib/dates.ts";
@@ -6,6 +9,9 @@ import { profitByListing } from "./finance.ts";
 import { stockTurnover, productionPlan } from "./inventory.ts";
 import { adsOverview } from "../ml/ads.ts";
 import { dashboard } from "./metrics.ts";
+
+/** Logo oficial (PNG transparente) usado no cabeçalho dos relatórios. */
+const LOGO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../assets/mind2matter-logo.png");
 
 type Fmt = "money" | "int" | "pct" | "text" | "date" | "num";
 interface Column { key: string; header: string; fmt?: Fmt; width?: number }
@@ -157,6 +163,10 @@ export async function toExcel(r: Report): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Mind2Matter · Mercado Livre Intelligence";
   const ws = wb.addWorksheet(r.title.slice(0, 31));
+  if (fs.existsSync(LOGO)) {
+    const img = wb.addImage({ buffer: fs.readFileSync(LOGO) as any, extension: "png" });
+    ws.addImage(img, { tl: { col: r.columns.length - 1, row: 0 }, ext: { width: 64, height: 64 } });
+  }
   ws.addRow(["MIND2MATTER · 3D PRINTING"]).font = { bold: true, size: 10, color: { argb: "FFD9520A" } };
   ws.addRow([r.title]).font = { bold: true, size: 14 };
   ws.addRow([r.subtitle]).font = { italic: true, color: { argb: "FF666666" } };
@@ -187,6 +197,8 @@ export function toPdf(r: Report): Promise<Buffer> {
     doc.on("error", reject);
     const W = doc.page.width - 72;
     doc.rect(0, 0, doc.page.width, 6).fill("#F26A1B");
+    const hasLogo = fs.existsSync(LOGO);
+    if (hasLogo) doc.image(LOGO, doc.page.width - 36 - 56, 22, { width: 56 });
     doc.fillColor("#0B0B0D").fontSize(16).font("Helvetica-Bold").text("MIND", 36, 36, { continued: true }).fillColor("#D9520A").text("2", { continued: true }).fillColor("#0B0B0D").text("MATTER");
     doc.fillColor("#D9520A").fontSize(7).font("Helvetica-Bold").text("3D PRINTING  ·  MERCADO LIVRE INTELLIGENCE", { characterSpacing: 1.5 }).moveDown(0.6);
     doc.fillColor("#111").fontSize(13).text(r.title);
