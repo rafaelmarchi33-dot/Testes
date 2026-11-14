@@ -61,7 +61,7 @@ No primeiro acesso, crie o usuário administrador. Depois, em **Integrações e 
 | `ENCRYPTION_KEY` | Chave AES-256 (32 bytes base64) para criptografar tokens — **obrigatória em produção** |
 | `APP_URL` | URL pública da interface |
 
-Passo a passo do aplicativo no Mercado Livre: [docs/MERCADO_LIVRE.md](docs/MERCADO_LIVRE.md). Arquitetura, segurança e operação: [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
+Checklist de produção (Railway + domínio + Mercado Livre + IA): [docs/PRODUCAO.md](docs/PRODUCAO.md). Passo a passo do aplicativo no Mercado Livre: [docs/MERCADO_LIVRE.md](docs/MERCADO_LIVRE.md). Arquitetura, segurança e operação: [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
 
 ## Testes
 
