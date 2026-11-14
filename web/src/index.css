@@ -2,48 +2,57 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Tokens de design: superfícies, texto, marca e semânticos — redefinidos no modo escuro. */
+/*
+ * Identidade visual Mind2Matter 3D Printing:
+ * laranja filamento (#F26A1B), creme (#EDE6D6) e preto carbono (#0B0B0D).
+ * Tokens redefinidos no modo escuro (padrão da marca) e no claro.
+ */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --color-bg: #f7f7fa;
+  --font-display: "Saira", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-brand: "Russo One", "Saira", ui-sans-serif, sans-serif;
+
+  --color-bg: #f5f2ec;
   --color-surface: #ffffff;
-  --color-surface-2: #f2f2f7;
-  --color-line: #e6e6ee;
-  --color-ink: #12121a;
-  --color-ink-2: #4b4b5c;
-  --color-ink-3: #8a8a9c;
-  --color-brand: #4f46e5;
-  --color-brand-2: #6366f1;
-  --color-brand-soft: #eef0ff;
-  --color-good: #059669;
-  --color-good-soft: #e7f7f0;
-  --color-warn: #d97706;
-  --color-warn-soft: #fdf3e2;
-  --color-bad: #dc2626;
-  --color-bad-soft: #fdecec;
-  --color-info: #0284c7;
-  --color-info-soft: #e6f4fb;
+  --color-surface-2: #f0ebe2;
+  --color-line: #e4ddd0;
+  --color-ink: #151413;
+  --color-ink-2: #4d4840;
+  --color-ink-3: #8c8579;
+  --color-brand: #d9520a;
+  --color-brand-2: #f26a1b;
+  --color-brand-soft: #fdeadb;
+  --color-cream: #ede6d6;
+  --color-carbon: #0b0b0d;
+  --color-good: #15803d;
+  --color-good-soft: #e5f4ea;
+  --color-warn: #b45309;
+  --color-warn-soft: #fbf0dc;
+  --color-bad: #c2261c;
+  --color-bad-soft: #fbe7e4;
+  --color-info: #0e7490;
+  --color-info-soft: #e1f2f6;
 }
 
 .dark {
-  --color-bg: #0b0b10;
-  --color-surface: #13131a;
-  --color-surface-2: #1b1b24;
-  --color-line: #262633;
-  --color-ink: #ededf3;
-  --color-ink-2: #a9a9bb;
-  --color-ink-3: #6e6e82;
-  --color-brand: #818cf8;
-  --color-brand-2: #a5b4fc;
-  --color-brand-soft: #1e1f3d;
-  --color-good: #34d399;
-  --color-good-soft: #0f2a21;
+  --color-bg: #09090a;
+  --color-surface: #111113;
+  --color-surface-2: #19191c;
+  --color-line: #26262a;
+  --color-ink: #ede6d6;
+  --color-ink-2: #b3ac9e;
+  --color-ink-3: #77726a;
+  --color-brand: #f26a1b;
+  --color-brand-2: #ff8a3d;
+  --color-brand-soft: #2b170a;
+  --color-good: #4ade80;
+  --color-good-soft: #10261a;
   --color-warn: #fbbf24;
-  --color-warn-soft: #2d2410;
+  --color-warn-soft: #2a2110;
   --color-bad: #f87171;
-  --color-bad-soft: #301617;
+  --color-bad-soft: #2e1413;
   --color-info: #38bdf8;
-  --color-info-soft: #0d2533;
+  --color-info-soft: #0c2230;
 }
 
 html, body, #root { height: 100%; }
@@ -54,7 +63,25 @@ body {
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "cv11", "ss01";
 }
+h1, h2 { font-family: var(--font-display); }
 .num { font-variant-numeric: tabular-nums; }
+.font-brand { font-family: var(--font-brand); letter-spacing: 0.02em; }
+
+/* Textura de fibra de carbono (CSS puro, sem imagem) */
+.carbon {
+  background-color: #0b0b0d;
+  background-image:
+    linear-gradient(27deg, #151517 5px, transparent 5px),
+    linear-gradient(207deg, #151517 5px, transparent 5px),
+    linear-gradient(27deg, #1b1b1e 5px, transparent 5px),
+    linear-gradient(207deg, #1b1b1e 5px, transparent 5px),
+    linear-gradient(90deg, #101012 10px, transparent 10px),
+    linear-gradient(#121214 25%, #0f0f11 25%, #0f0f11 50%, transparent 50%, transparent 75%, #18181b 75%, #18181b);
+  background-size: 20px 20px;
+  background-position: 0 5px, 10px 0, 0 10px, 10px 5px, 0 0, 0 0;
+}
+/* Fio de filamento: detalhe de destaque */
+.filament { background: linear-gradient(90deg, transparent, var(--color-brand-2), var(--color-brand), transparent); height: 2px; }
 
 @keyframes fade-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .animate-in { animation: fade-up 0.25s ease-out both; }
@@ -62,6 +89,7 @@ body {
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 8px; border: 2px solid var(--color-bg); }
+::selection { background: color-mix(in srgb, var(--color-brand) 35%, transparent); }
 
 .prose-ai h1, .prose-ai h2, .prose-ai h3 { font-weight: 600; margin: 0.9em 0 0.4em; }
 .prose-ai p { margin: 0.5em 0; }

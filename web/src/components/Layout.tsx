@@ -7,6 +7,7 @@ import {
 import { api, useApi } from "../lib/api.ts";
 import { cx } from "./ui.tsx";
 import { relative } from "../lib/format.ts";
+import { BrandLockup } from "./Brand.tsx";
 
 export interface User { id: number; name: string; email: string; role: "admin" | "operator" | "viewer" }
 export const UserCtx = createContext<User | null>(null);
@@ -103,14 +104,9 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
 
   const sidebar = (
     <nav className="flex h-full flex-col">
-      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-line">
-        <div className="grid size-8 place-items-center rounded-lg bg-brand text-white dark:text-[#0b0b10]">
-          <svg viewBox="0 0 32 32" className="size-5"><path d="M7 23V9l9 8 9-8v14" stroke="currentColor" strokeWidth="3.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </div>
-        <div className="leading-tight">
-          <div className="text-[13px] font-semibold tracking-tight">Mercado Livre</div>
-          <div className="text-[10px] font-semibold tracking-[0.18em] text-brand">INTELLIGENCE</div>
-        </div>
+      <div className="relative flex items-center px-4 h-16 border-b border-line">
+        <BrandLockup />
+        <div className="filament absolute inset-x-0 -bottom-px opacity-70" />
       </div>
       <div className="flex-1 overflow-y-auto px-2.5 py-3">
         {NAV.map((g) => (
@@ -135,7 +131,7 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
           {status.data?.account ? <span className="truncate">{status.data.account.nickname} · sinc. {relative(lastSync)}</span> : <span>Mercado Livre desconectado</span>}
         </div>
         <div className="mt-2 flex items-center gap-2 px-1.5">
-          <div className="grid size-7 place-items-center rounded-full bg-surface-2 text-[11px] font-semibold">{user.name.slice(0, 1).toUpperCase()}</div>
+          <div className="grid size-7 place-items-center rounded-full bg-brand-soft text-brand text-[11px] font-semibold">{user.name.slice(0, 1).toUpperCase()}</div>
           <div className="min-w-0 flex-1 leading-tight">
             <div className="truncate text-xs font-medium">{user.name}</div>
             <div className="text-[10px] text-ink-3">{{ admin: "Administrador", operator: "Operador", viewer: "Leitura" }[user.role]}</div>
@@ -157,7 +153,7 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
           </div>
         )}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface/85 px-4 backdrop-blur">
+          <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/85 px-4 backdrop-blur">
             <button className="lg:hidden rounded-md p-1.5 hover:bg-surface-2" onClick={() => setMobile(true)} aria-label="Menu">{mobile ? <X className="size-5" /> : <Menu className="size-5" />}</button>
             <GlobalSearch />
             <div className="ml-auto flex items-center gap-1">

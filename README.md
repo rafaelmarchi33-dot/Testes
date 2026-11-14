@@ -1,6 +1,8 @@
-# MERCADO LIVRE INTELLIGENCE
+# MIND2MATTER · MERCADO LIVRE INTELLIGENCE
 
-Plataforma de gestão comercial, inteligência artificial e automação de vendas para lojas no Mercado Livre — com foco em produção própria (ex.: impressão 3D).
+Plataforma de gestão comercial, inteligência artificial e automação de vendas da **Mind2Matter 3D Printing** no Mercado Livre.
+
+Identidade visual: laranja filamento `#F26A1B`, creme `#EDE6D6` e preto carbono `#0B0B0D`; tipografias Russo One (marca), Saira (títulos) e Inter (texto). Tema escuro é o padrão; o claro fica no botão de tema. Arquivos da marca em `web/public/brand/`.
 
 - **Integração oficial** com a API do Mercado Livre (OAuth 2.0 + PKCE, renovação automática de tokens, sincronização incremental, webhooks).
 - **Dados reais**: nenhuma tela usa dados fictícios. Quando uma integração não está disponível, o sistema mostra a limitação — nunca simula sucesso.

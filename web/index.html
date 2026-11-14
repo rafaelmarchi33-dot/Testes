@@ -1,13 +1,18 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><path d='M8 22V10l8 7 8-7v12' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
-    <title>Mercado Livre Intelligence</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0b0b0d" />
+    <link rel="icon" type="image/svg+xml" href="/brand/m2.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Russo+One&family=Saira:wght@500;600;700&display=swap" rel="stylesheet" />
+    <title>Mind2Matter · Mercado Livre Intelligence</title>
     <script>
-      try { const t = localStorage.getItem("mli-theme"); if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.classList.add("dark"); } catch {}
+      // Tema padrão da marca: escuro. O claro fica disponível pelo botão de tema.
+      try { if (localStorage.getItem("mli-theme") === "light") document.documentElement.classList.remove("dark"); } catch {}
     </script>
   </head>
   <body>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../lib/api.ts";
 import { Button, Field, Input, ErrorBox } from "../components/ui.tsx";
+import { M2Mark } from "../components/Brand.tsx";
 
 export default function Login({ needsSetup, onDone }: { needsSetup: boolean; onDone: () => void }) {
   const [form, setForm] = useState({ name: "", email: "", password: "" });
@@ -16,23 +17,21 @@ export default function Login({ needsSetup, onDone }: { needsSetup: boolean; onD
   };
   return (
     <div className="grid min-h-full lg:grid-cols-2">
-      <div className="hidden lg:flex flex-col justify-between bg-[#14143a] p-12 text-white">
-        <div className="flex items-center gap-2.5">
-          <div className="grid size-9 place-items-center rounded-lg bg-white/10">
-            <svg viewBox="0 0 32 32" className="size-5"><path d="M7 23V9l9 8 9-8v14" stroke="currentColor" strokeWidth="3.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </div>
-          <span className="text-sm font-semibold tracking-wide">MERCADO LIVRE INTELLIGENCE</span>
+      <div className="carbon relative hidden overflow-hidden lg:flex flex-col items-center justify-center gap-10 p-12 text-cream">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(242,106,27,0.18),transparent_60%)]" />
+        <img src="/brand/mind2matter-emblem.webp" alt="Mind2Matter 3D Printing" className="relative w-full max-w-[420px] rounded-2xl shadow-[0_30px_80px_-20px_rgba(242,106,27,0.45)]" />
+        <div className="relative max-w-md text-center">
+          <div className="filament mx-auto mb-5 w-40" />
+          <h2 className="text-3xl font-semibold leading-tight tracking-tight">Da ideia à peça. Da peça à venda.</h2>
+          <p className="mt-3 text-sm text-cream/70">Vendas, margens e oportunidades da sua loja no Mercado Livre em um só lugar — com dados reais e nenhuma alteração sem a sua aprovação.</p>
+          <p className="mt-6 text-[11px] tracking-[0.2em] text-[#f26a1b]">MERCADO LIVRE INTELLIGENCE</p>
         </div>
-        <div>
-          <h2 className="text-3xl font-semibold leading-tight tracking-tight">Vendas, margens e oportunidades<br />da sua loja em um só lugar.</h2>
-          <p className="mt-4 max-w-md text-sm text-white/60">Dados reais da sua conta, inteligência artificial que explica cada recomendação e nenhuma alteração na loja sem a sua aprovação.</p>
-        </div>
-        <p className="text-xs text-white/40">Integração oficial via API do Mercado Livre · OAuth 2.0</p>
       </div>
       <div className="flex items-center justify-center p-6">
         <form onSubmit={submit} className="w-full max-w-sm space-y-4">
+          <div className="lg:hidden mb-2"><M2Mark className="size-12" /></div>
           <div>
-            <h1 className="text-xl font-semibold">{needsSetup ? "Configuração inicial" : "Entrar"}</h1>
+            <h1 className="text-2xl font-semibold">{needsSetup ? "Configuração inicial" : "Entrar"}</h1>
             <p className="mt-1 text-sm text-ink-2">{needsSetup ? "Crie a conta de administrador da plataforma." : "Acesse o painel da sua loja."}</p>
           </div>
           {needsSetup && <Field label="Nome"><Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoComplete="name" /></Field>}

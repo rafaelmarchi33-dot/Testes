@@ -25,7 +25,7 @@ export function Card({ children, className, title, action, subtitle, pad = true 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
 export function Button({ variant = "secondary", size = "md", loading, icon, children, className, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md"; loading?: boolean; icon?: ReactNode }) {
   const styles: Record<Variant, string> = {
-    primary: "bg-brand text-white hover:opacity-90 dark:text-[#0b0b10]",
+    primary: "bg-brand text-white font-semibold hover:bg-brand-2 shadow-[0_6px_18px_-8px_rgba(242,106,27,0.7)] dark:text-[#0b0b0d]",
     secondary: "bg-surface border border-line text-ink hover:bg-surface-2",
     ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
     danger: "bg-bad text-white hover:opacity-90 dark:text-[#0b0b10]",
@@ -103,7 +103,8 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
+        <div className="mt-1.5 h-0.5 w-10 rounded-full bg-brand" />
         {subtitle && <p className="mt-1 text-sm text-ink-2">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}

@@ -14,6 +14,11 @@ export interface Report { title: string; subtitle: string; columns: Column[]; ro
 const brl = (n: unknown) => (typeof n === "number" ? n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—");
 const pct = (n: unknown) => (typeof n === "number" ? `${n.toFixed(1)}%` : "—");
 
+const ST: Record<string, string> = { paid: "Pago", cancelled: "Cancelado", confirmed: "Confirmado", payment_required: "Aguardando pagamento", payment_in_process: "Pagamento em processo", partially_paid: "Parcialmente pago", invalid: "Inválido" };
+const PAY: Record<string, string> = { approved: "Aprovado", pending: "Pendente", rejected: "Recusado", refunded: "Estornado", unknown: "—" };
+const SHIP: Record<string, string> = { pending: "Pendente", handling: "Em preparação", ready_to_ship: "Pronto para envio", shipped: "Enviado", delivered: "Entregue", not_delivered: "Não entregue", cancelled: "Cancelado" };
+const LST: Record<string, string> = { active: "Ativo", paused: "Pausado", closed: "Encerrado", under_review: "Em revisão", inactive: "Inativo" };
+
 export const REPORTS = {
   sales: "Relatório de vendas",
   products: "Relatório de produtos",
@@ -37,8 +42,11 @@ export function buildReport(key: ReportKey, range: Range): Report {
          FROM orders o LEFT JOIN shipments s ON s.id=o.shipping_id
          WHERE o.date_created >= ? AND o.date_created < ? ORDER BY o.date_created DESC`,
         [range.fromUtc, range.toUtc],
-      ).map((r) => ({ ...r, date_created: localDate(r.date_created) }));
-      const paid = rows.filter((r) => r.status === "paid");
+      ).map((r) => ({
+        ...r, date_created: localDate(r.date_created),
+        status: ST[r.status] ?? r.status, payment_status: PAY[r.payment_status] ?? r.payment_status, ship_status: SHIP[r.ship_status] ?? r.ship_status,
+      }));
+      const paid = rows.filter((r) => r.status === ST.paid);
       return {
         title: REPORTS.sales, subtitle,
         columns: [
@@ -48,7 +56,7 @@ export function buildReport(key: ReportKey, range: Range): Report {
           { key: "ship_status", header: "Envio", fmt: "text", width: 14 }, { key: "tracking_number", header: "Rastreio", fmt: "text", width: 18 },
         ],
         rows,
-        summary: [["Pedidos pagos", String(paid.length)], ["Faturamento", brl(paid.reduce((s, r) => s + r.total_amount, 0))], ["Cancelados", String(rows.filter((r) => r.status === "cancelled").length)]],
+        summary: [["Pedidos pagos", String(paid.length)], ["Faturamento", brl(paid.reduce((s, r) => s + r.total_amount, 0))], ["Cancelados", String(rows.filter((r) => r.status === ST.cancelled).length)]],
       };
     }
     case "products": {
@@ -57,7 +65,7 @@ export function buildReport(key: ReportKey, range: Range): Report {
            COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ? AND o.date_created < ?),0) units_period
          FROM listings l ORDER BY units_period DESC, l.sold_quantity DESC`,
         [range.fromUtc, range.toUtc],
-      );
+      ).map((r) => ({ ...r, status: LST[r.status] ?? r.status }));
       return {
         title: REPORTS.products, subtitle,
         columns: [
@@ -66,7 +74,7 @@ export function buildReport(key: ReportKey, range: Range): Report {
           { key: "available_quantity", header: "Disponível", fmt: "int", width: 10 }, { key: "units_period", header: "Vendidos (período)", fmt: "int", width: 12 },
           { key: "sold_quantity", header: "Vendidos (total ML)", fmt: "int", width: 12 },
         ],
-        rows, summary: [["Anúncios", String(rows.length)], ["Ativos", String(rows.filter((r) => r.status === "active").length)]],
+        rows, summary: [["Anúncios", String(rows.length)], ["Ativos", String(rows.filter((r) => r.status === LST.active).length)]],
       };
     }
     case "financial":
@@ -147,15 +155,17 @@ export function buildReport(key: ReportKey, range: Range): Report {
 
 export async function toExcel(r: Report): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Mercado Livre Intelligence";
+  wb.creator = "Mind2Matter · Mercado Livre Intelligence";
   const ws = wb.addWorksheet(r.title.slice(0, 31));
+  ws.addRow(["MIND2MATTER · 3D PRINTING"]).font = { bold: true, size: 10, color: { argb: "FFD9520A" } };
   ws.addRow([r.title]).font = { bold: true, size: 14 };
   ws.addRow([r.subtitle]).font = { italic: true, color: { argb: "FF666666" } };
   for (const [k, v] of r.summary) ws.addRow([k, v]);
   ws.addRow([]);
   const header = ws.addRow(r.columns.map((c) => c.header));
-  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  header.eachCell((c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2D3277" } }));
+  header.font = { bold: true, color: { argb: "FFEDE6D6" } };
+  header.eachCell((c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0B0B0D" } }));
+  header.eachCell((c) => (c.border = { bottom: { style: "medium", color: { argb: "FFF26A1B" } } }));
   for (const row of r.rows) ws.addRow(r.columns.map((c) => (row[c.key] ?? null) as ExcelJS.CellValue));
   r.columns.forEach((c, i) => {
     const col = ws.getColumn(i + 1);
@@ -176,7 +186,9 @@ export function toPdf(r: Report): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
     const W = doc.page.width - 72;
-    doc.fillColor("#2D3277").fontSize(16).font("Helvetica-Bold").text("MERCADO LIVRE INTELLIGENCE");
+    doc.rect(0, 0, doc.page.width, 6).fill("#F26A1B");
+    doc.fillColor("#0B0B0D").fontSize(16).font("Helvetica-Bold").text("MIND", 36, 36, { continued: true }).fillColor("#D9520A").text("2", { continued: true }).fillColor("#0B0B0D").text("MATTER");
+    doc.fillColor("#D9520A").fontSize(7).font("Helvetica-Bold").text("3D PRINTING  ·  MERCADO LIVRE INTELLIGENCE", { characterSpacing: 1.5 }).moveDown(0.6);
     doc.fillColor("#111").fontSize(13).text(r.title);
     doc.fillColor("#666").fontSize(8).font("Helvetica").text(r.subtitle).moveDown(0.6);
     for (const [k, v] of r.summary) doc.fillColor("#111").fontSize(9).font("Helvetica-Bold").text(`${k}: `, { continued: true }).font("Helvetica").text(v);
@@ -192,14 +204,14 @@ export function toPdf(r: Report): Promise<Buffer> {
       if (fill) doc.rect(36, yy, W, h).fill(fill);
       let x = 36;
       cells.forEach((c, i) => {
-        doc.fillColor(bold ? "#fff" : "#111").font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(7.5).text(c, x + 2, yy + 2, { width: widths[i]! - 4 });
+        doc.fillColor(bold ? "#EDE6D6" : "#111").font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(7.5).text(c, x + 2, yy + 2, { width: widths[i]! - 4 });
         x += widths[i]!;
       });
       doc.x = 36;
       doc.y = yy + h;
     };
-    drawRow(r.columns.map((c) => c.header), true, "#2D3277");
-    r.rows.slice(0, 2000).forEach((row, idx) => drawRow(r.columns.map((c) => fmt(row[c.key], c.fmt)), false, idx % 2 ? "#F3F4F8" : undefined));
+    drawRow(r.columns.map((c) => c.header), true, "#0B0B0D");
+    r.rows.slice(0, 2000).forEach((row, idx) => drawRow(r.columns.map((c) => fmt(row[c.key], c.fmt)), false, idx % 2 ? "#F5F2EC" : undefined));
     if (!r.rows.length) doc.moveDown().fillColor("#666").fontSize(9).text("Sem dados para o período selecionado.");
     doc.end();
   });
