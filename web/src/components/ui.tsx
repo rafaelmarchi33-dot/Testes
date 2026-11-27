@@ -286,7 +286,7 @@ export function Pending({ title = "Informação pendente", children, action }: {
 export function SourceTag({ kind }: { kind: "api" | "orders" | "report" | "initial_import" | "import" | "estimate" | "derived" | "manual" | string }) {
   const map: Record<string, [string, Tone]> = {
     api: ["API", "good"], orders: ["Pedidos", "good"], report: ["Relatório importado", "info"], initial_import: ["Importação inicial", "info"],
-    import: ["Importado", "info"], estimate: ["Estimativa", "warn"], derived: ["Derivado", "neutral"], manual: ["Manual", "neutral"], report_derived: ["Derivado do relatório", "neutral"],
+    import: ["Importado", "info"], daily_metrics: ["Métricas diárias", "info"], estimate: ["Estimativa", "warn"], derived: ["Derivado", "neutral"], manual: ["Manual", "neutral"], report_derived: ["Derivado do relatório", "neutral"],
   };
   const [label, tone] = map[kind] ?? [kind, "neutral" as Tone];
   return <Badge tone={tone}>{label}</Badge>;

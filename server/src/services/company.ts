@@ -41,23 +41,37 @@ export function dailyOrderRevenue(from: string, to: string, channel?: string) {
   return eachDay(from, to).map((d) => ({ date: d, revenue: m.get(d)?.revenue ?? 0, orders: m.get(d)?.orders ?? 0 }));
 }
 
+/** Métricas diárias importadas (relatório de desempenho do ML). */
+export function dailyMetrics(from: string, to: string, channel?: string) {
+  return q.all<any>(
+    `SELECT * FROM daily_metrics WHERE date >= ? AND date <= ? ${channel && channel !== "all" ? "AND channel = ?" : ""} ORDER BY date`,
+    [from, to, ...(channel && channel !== "all" ? [channel] : [])],
+  );
+}
+
 /**
- * Faturamento de um intervalo combinando fontes sem dupla contagem:
- * pedidos individuais (API/importação) + relatórios agregados cujos dias não têm pedidos registrados.
+ * Faturamento de um intervalo combinando fontes sem dupla contagem, nesta prioridade:
+ * 1) pedidos individuais (API/importação); 2) métricas diárias importadas nos dias sem pedidos;
+ * 3) relatórios agregados cujos dias não têm pedidos nem métricas diárias.
  */
 export function revenueWithReports(from: string, to: string, channel?: string) {
   const daily = dailyOrderRevenue(from, to, channel);
   const orderRevenue = daily.reduce((s, d) => s + d.revenue, 0);
   const daysWithOrders = new Set(daily.filter((d) => d.orders > 0).map((d) => d.date));
+  const metrics = dailyMetrics(from, to, channel).filter((m) => !daysWithOrders.has(m.date));
+  const metricsRevenue = metrics.reduce((s, m) => s + (m.gross_sales ?? 0), 0);
+  const covered = new Set([...daysWithOrders, ...metrics.map((m) => m.date)]);
   const reports = q.all<any>(
     `SELECT * FROM period_reports WHERE date_from >= ? AND date_to <= ? ${channel && channel !== "all" ? "AND channel = ?" : ""}`,
     [from, to, ...(channel && channel !== "all" ? [channel] : [])],
-  ).filter((r) => !eachDay(r.date_from, r.date_to).some((d) => daysWithOrders.has(d)));
+  ).filter((r) => !eachDay(r.date_from, r.date_to).some((d) => covered.has(d)));
   const reportRevenue = reports.reduce((s, r) => s + (r.gross_sales ?? 0), 0);
   return {
-    total: orderRevenue + reportRevenue,
+    total: orderRevenue + metricsRevenue + reportRevenue,
     from_orders: orderRevenue,
+    from_metrics: metricsRevenue,
     from_reports: reportRevenue,
+    metrics_days: metrics.map((m) => ({ date: m.date, revenue: m.gross_sales ?? 0 })),
     reports_used: reports.map((r) => ({ id: r.id, date_from: r.date_from, date_to: r.date_to, gross_sales: r.gross_sales, source: r.source })),
     daily,
   };
@@ -86,7 +100,7 @@ export function goalProgress(now = new Date(), channel?: string) {
 
   // Série acumulada do mês: real x trajetória linear até a meta.
   let acc = 0;
-  const reportDays = new Map<string, number>();
+  const reportDays = new Map<string, number>(rev.metrics_days.map((m) => [m.date, m.revenue]));
   for (const r of rev.reports_used) {
     const days = eachDay(r.date_from, r.date_to);
     for (const d of days) reportDays.set(d, (reportDays.get(d) ?? 0) + (r.gross_sales ?? 0) / days.length);
@@ -99,7 +113,7 @@ export function goalProgress(now = new Date(), channel?: string) {
   });
   const milestones = q.all<any>("SELECT * FROM goals ORDER BY target_revenue");
   return {
-    month: today.slice(0, 7), today, goal, revenue: rev.total, from_orders: rev.from_orders, from_reports: rev.from_reports, reports_used: rev.reports_used,
+    month: today.slice(0, 7), today, goal, revenue: rev.total, from_orders: rev.from_orders, from_metrics: rev.from_metrics, from_reports: rev.from_reports, reports_used: rev.reports_used,
     progress_pct: goal > 0 ? (rev.total / goal) * 100 : null,
     expected_to_date: Math.round(expectedToDate * 100) / 100,
     trajectory_pct: expectedToDate > 0 ? (rev.total / expectedToDate) * 100 : null,
@@ -121,17 +135,21 @@ export function observedDailyPace(today: string, channel?: string) {
   let revenue = daily.reduce((s, d) => s + d.revenue, 0);
   let coveredDays = hasApi ? 30 : orderDays.length;
   const used: string[] = [];
+  const covered = new Set(orderDays.map((o) => o.date));
+  const metrics = dailyMetrics(from, today, channel).filter((m) => !covered.has(m.date));
+  for (const m of metrics) { revenue += m.gross_sales ?? 0; covered.add(m.date); if (!hasApi) coveredDays += 1; }
+  if (metrics.length) used.push(`métricas diárias de ${metrics.length} dia(s)`);
   for (const r of reports) {
     const days = eachDay(r.date_from, r.date_to);
-    if (days.some((d) => orderDays.find((o) => o.date === d))) continue;
+    if (days.some((d) => covered.has(d))) continue;
     revenue += r.gross_sales ?? 0;
     if (!hasApi) coveredDays += days.length;
-    used.push(`${r.date_from}→${r.date_to}`);
+    used.push(`relatório ${r.date_from}→${r.date_to}`);
   }
   return {
     daily_avg: coveredDays > 0 ? Math.round((revenue / coveredDays) * 100) / 100 : null,
     covered_days: coveredDays,
-    basis: hasApi ? "pedidos sincronizados dos últimos 30 dias" : coveredDays ? `dias com dados registrados${used.length ? ` (inclui relatório ${used.join(", ")})` : ""}` : "sem histórico",
+    basis: hasApi ? "pedidos sincronizados dos últimos 30 dias" : coveredDays ? `${coveredDays} dia(s) com dados registrados${used.length ? ` (inclui ${used.join(", ")})` : ""}` : "sem histórico",
   };
 }
 

@@ -22,7 +22,7 @@ import {
   listOpportunities, saveOpportunity, oppSchema, radarFromMl, radarWebResearch, addOpportunityToLab, RADAR_CATEGORIES,
   listLab, labEvent, convertLabToProduct, LAB_STATUS, LAB_STATUS_LABEL, estimateMargin,
 } from "../services/rnd.ts";
-import { IMPORT_KINDS, readFileRows, buildPreview, guessKind, parseMetricsText, commitImport, undoImport } from "../services/imports.ts";
+import { IMPORT_KINDS, readFileRows, buildPreview, guessKindFromRows, parseMetricsText, commitImport, undoImport } from "../services/imports.ts";
 import { chat, listConversations, getConversation, ceoDiagnosis, latestDiagnosis, analyze, generateListingCopy, companySnapshot } from "../ai/mind.ts";
 import { listRoutines, runRoutine, routineData } from "../services/routines.ts";
 import { toExcel, toPdf, type Report } from "../services/reports.ts";
@@ -658,7 +658,10 @@ async function previewFor(imp: any, kind: string, mapping?: Record<string, numbe
   if (data.type === "pdf") {
     const values = parseMetricsText(data.text ?? "");
     const found = Object.values(values).filter((v) => v !== null).length;
-    pdfNote = found ? `${found} valor(es) identificados no PDF. Confira antes de importar.` : "Nenhum indicador reconhecido no PDF. Exporte o relatório em CSV/XLSX ou cadastre manualmente.";
+    const labels = /Despachar:|DACE|DECLARA[ÇC][ÃA]O AUXILIAR DE/i.test(data.text ?? "");
+    pdfNote = labels
+      ? "Este PDF contém etiquetas de envio/DACE (dados de despacho e de compradores), não métricas de vendas. Ele não é importado para proteger dados pessoais. Para pedidos, exporte Vendas › Exportar (Excel) no Mercado Livre."
+      : found ? `${found} valor(es) identificados no PDF. Confira antes de importar.` : "Nenhum indicador reconhecido no PDF. Exporte o relatório em CSV/XLSX ou cadastre manualmente.";
     preview = buildPreview("period_report", [], undefined, values);
     kind = "period_report";
   } else {
@@ -689,8 +692,7 @@ v2.post("/imports", operator, importUpload.single("file"), ah(async (req, res) =
     if (ext === "pdf") kind = "period_report";
     else {
       const data = await readFileRows(path.join(importDir, f.filename), f.originalname);
-      const headerGuess = data.rows.slice(0, 20).sort((a, b) => b.filter(Boolean).length - a.filter(Boolean).length)[0] ?? [];
-      kind = guessKind(headerGuess);
+      kind = guessKindFromRows(data.rows);
     }
   }
   if (!IMPORT_KINDS[kind]) throw new HttpError(400, "Tipo de importação inválido");

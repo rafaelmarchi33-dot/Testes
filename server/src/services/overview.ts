@@ -1,7 +1,7 @@
 import { q } from "../db/index.ts";
 import { resolvePeriod, comparisonRange, eachDay, type Range, TZ_OFFSET_MIN } from "../lib/dates.ts";
 import { profitByListing } from "./finance.ts";
-import { periodReports, goalProgress } from "./company.ts";
+import { periodReports, goalProgress, dailyMetrics } from "./company.ts";
 import { listingsCenter } from "./listingsIntel.ts";
 import { machineOccupancy } from "./factory.ts";
 import { getAccount } from "../ml/client.ts";
@@ -61,6 +61,27 @@ function reportKpis(r: Range, channel?: string) {
   };
 }
 
+/** KPIs a partir das métricas diárias importadas (quando não há pedidos individuais no período). */
+function metricsKpis(r: Range, channel?: string) {
+  const rows = dailyMetrics(r.from, r.to, channel);
+  if (!rows.length) return null;
+  const sum = (k: string) => rows.reduce((s, x) => s + (x[k] ?? 0), 0);
+  const revenue = sum("gross_sales"), orders = sum("sales_count"), units = sum("units"), visits = sum("unique_visits");
+  return {
+    days: rows.length,
+    rows,
+    kpis: {
+      source: "daily_metrics", revenue, orders, units, avg_ticket: orders ? revenue / orders : null, avg_unit_price: units ? revenue / units : null,
+      visits, conversion_pct: visits ? (orders / visits) * 100 : null,
+      ad_spend: null, ad_revenue: null, roas: null, acos_pct: null, estimated_profit: null, contribution_margin_pct: null, profit_coverage_pct: null,
+    },
+    funnel: {
+      unique_visits: visits, intent_unique_visitors: sum("intent_unique_visitors"), intent_count: sum("intent_count"), intent_units: sum("intent_units"),
+      intent_value: sum("intent_value"), sales_count: orders, units, gross_sales: revenue, unique_buyers: sum("unique_buyers"), likes: sum("likes"),
+    },
+  };
+}
+
 const pct = (a: number | null | undefined, b: number | null | undefined) => (a == null || b == null || b === 0 ? null : ((a - b) / b) * 100);
 
 export function overview(period: string, from?: string, to?: string, channel?: string) {
@@ -70,7 +91,24 @@ export function overview(period: string, from?: string, to?: string, channel?: s
   let before: any = orderKpis(prev, channel);
   let dataSource = cur.source;
   let report: any = null;
-  if (cur.orders === 0) {
+  let funnel: any = null;
+  let metricsDays = 0;
+  const mk = cur.orders === 0 ? metricsKpis(range, channel) : null;
+  if (mk) {
+    cur = { ...cur, ...mk.kpis };
+    funnel = mk.funnel;
+    metricsDays = mk.days;
+    dataSource = "daily_metrics";
+    if (before.orders === 0) {
+      const mp = metricsKpis(prev, channel);
+      if (mp) before = { ...before, ...mp.kpis };
+      else {
+        // sem métricas do período anterior: usa o anterior derivado do relatório agregado do mesmo período, se houver
+        const rk = reportKpis(range, channel);
+        if (rk && rk.report.date_from === range.from && rk.report.date_to === range.to) { before = { ...before, ...rk.previous }; report = rk.report; }
+      }
+    }
+  } else if (cur.orders === 0) {
     const rk = reportKpis(range, channel);
     if (rk) {
       report = rk.report;
@@ -117,7 +155,14 @@ export function overview(period: string, from?: string, to?: string, channel?: s
       [r.fromUtc, r.toUtc, ...c.p],
     );
     const m = new Map(rows.map((x) => [x.d, x]));
-    return eachDay(r.from, r.to).map((d) => ({ date: d, revenue: m.get(d)?.revenue ?? 0, orders: m.get(d)?.orders ?? 0 }));
+    // dias sem pedidos usam as métricas diárias importadas
+    const met = new Map(dailyMetrics(r.from, r.to, channel).map((x) => [x.date, x]));
+    return eachDay(r.from, r.to).map((d) => {
+      const o = m.get(d);
+      if (o) return { date: d, revenue: o.revenue, orders: o.orders };
+      const x = met.get(d);
+      return { date: d, revenue: x?.gross_sales ?? 0, orders: x?.sales_count ?? 0 };
+    });
   };
   const curDaily = dailyRows(range), prevDaily = dailyRows(prev);
   const daily = curDaily.map((p, i) => ({ ...p, prev_revenue: prevDaily[i]?.revenue ?? 0, prev_date: prevDaily[i]?.date }));
@@ -127,6 +172,16 @@ export function overview(period: string, from?: string, to?: string, channel?: s
     `SELECT strftime('%Y-W%W', ${LOCAL_DAY}) week, SUM(o.total_amount) revenue, COUNT(*) orders FROM orders o WHERE o.status='paid' AND o.date_created >= ?${c.sql} GROUP BY week ORDER BY week`,
     [new Date(Date.now() - 16 * 7 * 86_400_000).toISOString(), ...c.p],
   );
+  // semanas: soma as métricas diárias importadas nos dias sem pedidos
+  for (const mw of q.all<{ week: string; revenue: number; orders: number }>(
+    `SELECT strftime('%Y-W%W', date) week, SUM(gross_sales) revenue, SUM(sales_count) orders FROM daily_metrics d
+     WHERE date >= ? AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.status='paid' AND ${LOCAL_DAY} = d.date) ${channel && channel !== "all" ? "AND d.channel = ?" : ""} GROUP BY week`,
+    [new Date(Date.now() - 16 * 7 * 86_400_000).toISOString().slice(0, 10), ...c.p],
+  )) {
+    const w = weekly.find((x) => x.week === mw.week);
+    if (w) { w.revenue += mw.revenue; w.orders += mw.orders; } else weekly.push(mw);
+  }
+  weekly.sort((a, b) => a.week.localeCompare(b.week));
   const monthly = q.all<{ month: string; revenue: number; orders: number }>(
     `SELECT substr(${LOCAL_DAY},1,7) month, SUM(o.total_amount) revenue, COUNT(*) orders FROM orders o WHERE o.status='paid' AND o.date_created >= ?${c.sql} GROUP BY month ORDER BY month`,
     [new Date(Date.now() - 400 * 86_400_000).toISOString(), ...c.p],
@@ -134,7 +189,18 @@ export function overview(period: string, from?: string, to?: string, channel?: s
   // Relatórios agregados entram na série semanal/mensal marcados como tal
   const reports = periodReports().filter((r) => !channel || channel === "all" || r.channel === channel);
   const monthlyWithReports = [...monthly.map((m) => ({ ...m, report_revenue: 0 }))];
+  const metricsMonth = q.all<{ month: string; revenue: number; first: string; last: string }>(
+    `SELECT substr(date,1,7) month, SUM(gross_sales) revenue, MIN(date) first, MAX(date) last FROM daily_metrics d
+     WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.status='paid' AND ${LOCAL_DAY} = d.date) ${channel && channel !== "all" ? "AND d.channel = ?" : ""} GROUP BY month`,
+    channel && channel !== "all" ? [channel] : [],
+  );
+  for (const mm of metricsMonth) {
+    const row = monthlyWithReports.find((x) => x.month === mm.month);
+    if (row) row.report_revenue += mm.revenue; else monthlyWithReports.push({ month: mm.month, revenue: 0, orders: 0, report_revenue: mm.revenue });
+  }
+  const metricDays = new Set(q.all<{ date: string }>("SELECT date FROM daily_metrics").map((x) => x.date));
   for (const r of reports) {
+    if (eachDay(r.date_from, r.date_to).some((d) => metricDays.has(d))) continue;
     const m = r.date_from.slice(0, 7);
     const hasOrders = curDaily.concat(prevDaily).some((d) => d.orders > 0 && d.date >= r.date_from && d.date <= r.date_to)
       || !!q.get(`SELECT 1 FROM orders o WHERE o.status='paid' AND ${LOCAL_DAY} BETWEEN ? AND ?`, [r.date_from, r.date_to]);
@@ -161,6 +227,10 @@ export function overview(period: string, from?: string, to?: string, channel?: s
     }
     return [...cats.values()].filter((x) => x.known).sort((a, b) => b.profit - a.profit);
   })();
+  const metricsInRange = dailyMetrics(range.from, range.to, channel);
+  const dailyConversion = metricsInRange.length
+    ? metricsInRange.map((x) => ({ date: x.date, conversion: x.unique_visits ? (x.sales_count / x.unique_visits) * 100 : 0, intent: x.unique_visits ? (x.intent_unique_visitors / x.unique_visits) * 100 : 0, visits: x.unique_visits }))
+    : null;
   const adsDaily = q.all<any>("SELECT date, SUM(cost) cost, SUM(total_amount) revenue FROM ads_campaign_daily WHERE date >= ? AND date <= ? GROUP BY date ORDER BY date", [range.from, range.to]);
   const goal = goalProgress(new Date(), channel);
   const { profit_rows: _a, ...curOut } = cur;
@@ -168,7 +238,7 @@ export function overview(period: string, from?: string, to?: string, channel?: s
 
   return {
     range, previous: prev, period, channel: channel ?? "all",
-    data_source: dataSource, report_used: report,
+    data_source: dataSource, report_used: report, metrics_days: metricsDays, funnel,
     connected: !!getAccount(),
     last_sync: q.get<{ at: string | null }>("SELECT MAX(last_success_at) at FROM sync_state WHERE status='ok'")!.at,
     kpis: curOut, previous_kpis: prevOut, changes, operational,
@@ -183,6 +253,7 @@ export function overview(period: string, from?: string, to?: string, channel?: s
       profit_by_category: profitByCategory.length ? profitByCategory : null,
       ads_vs_return: adsDaily.length ? adsDaily : null,
       goal_series: goal.series,
+      daily_conversion: dailyConversion,
     },
     pending: pendingData(),
   };
@@ -192,7 +263,9 @@ export function overview(period: string, from?: string, to?: string, channel?: s
 export function pendingData(): string[] {
   const out: string[] = [];
   if (!getAccount()) out.push("Mercado Livre não conectado — vendas diárias, pedidos e visitas dependem da conexão ou de importação de relatórios.");
-  if (!q.get("SELECT 1 FROM orders")) out.push("Nenhum pedido individual registrado: gráficos diários, produtos mais vendidos e lucro por produto ficam pendentes.");
+  if (!q.get("SELECT 1 FROM orders")) out.push(q.get("SELECT 1 FROM daily_metrics")
+    ? "Sem pedidos individuais: gráficos diários usam as métricas importadas, mas produtos mais vendidos e lucro por produto exigem o relatório de vendas (Vendas › Exportar)."
+    : "Nenhum pedido individual registrado: gráficos diários, produtos mais vendidos e lucro por produto ficam pendentes.");
   if (!q.get("SELECT 1 FROM product_costs") && !q.get("SELECT 1 FROM products WHERE weight_g > 0 AND print_minutes > 0")) out.push("Nenhum produto com custos (ficha de custos ou peso/tempo): lucro e margem não podem ser calculados.");
   const cfg = q.get<{ value: string }>("SELECT value FROM settings WHERE key='cost_config'");
   if (!cfg) out.push("Configuração de custos (filamento, energia, embalagem, taxas) ainda não preenchida no módulo Financeiro.");

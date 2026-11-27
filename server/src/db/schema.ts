@@ -520,4 +520,16 @@ INSERT INTO routines (key, name, description, frequency, weekday, hour) VALUES
   ('friday','Sexta — Relatório executivo','Resultados da semana e planejamento da semana seguinte.','weekly',5,17),
   ('month_end','Fechamento do mês','DRE gerencial, faturamento, lucro, despesas, margens, crescimento, metas e plano do próximo mês.','monthly_end',NULL,18);
 `,
+  /* 004 — métricas diárias de desempenho (relatório "Métricas do desempenho dos seus produtos" do ML) */ `
+CREATE TABLE daily_metrics (
+  channel TEXT NOT NULL DEFAULT 'mercadolivre',
+  date TEXT NOT NULL,
+  unique_visits INTEGER, total_visits INTEGER, likes INTEGER,
+  intent_unique_visitors INTEGER, intent_units INTEGER, intent_count INTEGER, intent_value REAL,
+  sales_count INTEGER, unique_buyers INTEGER, units INTEGER, gross_sales REAL,
+  source TEXT NOT NULL DEFAULT 'import', import_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (channel, date)
+);
+`,
 ];

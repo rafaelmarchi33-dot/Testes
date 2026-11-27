@@ -5,7 +5,7 @@ import {
 import { useApi } from "../lib/api.ts";
 import { useGlobal, PERIODS } from "../lib/global.tsx";
 import { Card, PageHeader, Spinner, ErrorBox, Kpi, Pending, SourceTag, Badge, Button, Notice } from "../components/ui.tsx";
-import { RevenueTrend, Bars, HBars, GoalChart, AdsReturn, Ring } from "../components/charts.tsx";
+import { RevenueTrend, Bars, HBars, GoalChart, AdsReturn, Ring, SmallLine } from "../components/charts.tsx";
 import { brl, brlShort, int, pct, relative, date } from "../lib/format.ts";
 
 const monthLabel = (m: string) => new Date(m + "-15").toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
@@ -15,7 +15,7 @@ export default function Overview() {
   const { data: d, error, loading, reload } = useApi<any>(`/overview?${g.query}`);
   const compare = PERIODS.find((p) => p.value === g.period.period)?.compare ?? "";
   const k = d?.kpis, c = d?.changes, op = d?.operational, goal = d?.goal;
-  const src = d?.data_source === "report" ? "report" : d?.data_source === "orders" ? "orders" : undefined;
+  const src = d?.data_source === "report" ? "report" : d?.data_source === "orders" ? "orders" : d?.data_source === "daily_metrics" ? "daily_metrics" : undefined;
   const pendingKpi = (v: unknown, txt: string) => (v === null || v === undefined ? { value: "—", hint: txt } : null);
 
   return (
@@ -33,6 +33,12 @@ export default function Overview() {
             <Notice title="Dados de relatório importado.">
               Não há pedidos individuais neste período; os indicadores vêm do relatório agregado do Mercado Livre de {date(d.report_used.date_from)} a {date(d.report_used.date_to)}
               {d.report_used.source === "initial_import" ? " (dados iniciais informados na implantação)" : ""}. As variações são as informadas no relatório. Não são métricas em tempo real.
+            </Notice>
+          )}
+          {d.data_source === "daily_metrics" && (
+            <Notice title="Métricas diárias importadas.">
+              Sem pedidos individuais neste período: os indicadores vêm do relatório “Métricas do desempenho dos seus produtos” do Mercado Livre ({d.metrics_days} dia(s) com dados).
+              Conversão = vendas ÷ visitas únicas (definição do ML). {d.previous_kpis.source === "report_derived" ? "O período anterior é derivado das variações do relatório agregado." : ""}
             </Notice>
           )}
           {d.data_source === "none" && (
@@ -85,6 +91,13 @@ export default function Overview() {
             <Kpi label="Ocupação das máquinas" {...(pendingKpi(op.occupancy_pct, "sem OPs concluídas") ?? { value: pct(op.occupancy_pct, 0) })} icon={<Cpu />} hint={op.capacity_hours ? `capacidade ${int(op.capacity_hours)} h` : undefined} />
           </div>
 
+          {d.funnel && <Funnel f={d.funnel} />}
+          {d.charts.daily_conversion && (
+            <Card title="Conversão diária" subtitle="Vendas ÷ visitas únicas e intenção de compra ÷ visitas únicas, por dia">
+              <SmallLine data={d.charts.daily_conversion} keys={[{ key: "conversion", name: "Conversão em vendas (%)", color: "var(--color-brand)" }, { key: "intent", name: "Intenção de compra (%)", color: "var(--color-warn)" }]} />
+            </Card>
+          )}
+
           {/* Relatório inicial importado */}
           <ImportedReports />
 
@@ -106,7 +119,7 @@ export default function Overview() {
               </div>
             </Card>
             <Card title="Evolução semanal">
-              {d.charts.weekly ? <Bars data={d.charts.weekly} xKey="week" xFmt={(w) => `S${String(w).slice(-2)}`} bars={[{ key: "revenue", name: "Faturamento", color: "var(--color-brand)" }]} /> : <Pending>Sem pedidos nas últimas 16 semanas.</Pending>}
+              {d.charts.weekly ? <Bars data={d.charts.weekly} xKey="week" xFmt={(w) => `S${String(w).slice(-2)}`} bars={[{ key: "revenue", name: "Faturamento", color: "var(--color-brand)" }]} /> : <Pending>Sem vendas registradas nas últimas 16 semanas.</Pending>}
             </Card>
             <Card title="Evolução mensal" subtitle="Pedidos + relatórios agregados importados">
               {d.charts.monthly ? <Bars data={d.charts.monthly} xKey="month" xFmt={monthLabel} bars={[{ key: "revenue", name: "Pedidos", color: "var(--color-brand)", stack: "a" }, { key: "report_revenue", name: "Relatório importado", color: "var(--color-info)", stack: "a" }]} /> : <Pending>Sem histórico mensal.</Pending>}
@@ -160,6 +173,32 @@ export default function Overview() {
         </div>
       )}
     </>
+  );
+}
+
+function Funnel({ f }: { f: any }) {
+  const steps = [
+    { label: "Visitas únicas", value: f.unique_visits, sub: `${int(f.likes)} curtidas` },
+    { label: "Visitantes com intenção de compra", value: f.intent_unique_visitors, sub: `${int(f.intent_count)} intenções · ${int(f.intent_units)} un. · ${brl(f.intent_value)}` },
+    { label: "Vendas", value: f.sales_count, sub: `${int(f.units)} un. · ${brl(f.gross_sales)} · ${int(f.unique_buyers)} compradores únicos` },
+  ];
+  const max = Math.max(1, f.unique_visits);
+  const gap = f.intent_value - f.gross_sales;
+  return (
+    <Card title="Funil de compra" subtitle="Relatório de desempenho do Mercado Livre (métricas importadas)">
+      <div className="space-y-3">
+        {steps.map((st, i) => (
+          <div key={st.label}>
+            <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2 text-xs"><span className="font-medium">{st.label}</span><span className="text-ink-3">{st.sub}</span></div>
+            <div className="flex items-center gap-3">
+              <div className="h-7 flex-1 rounded-md bg-surface-2"><div className="flex h-7 items-center rounded-md bg-brand/80 px-2 text-xs font-semibold text-white dark:text-[#04130d] num" style={{ width: `${Math.max(6, (st.value / max) * 100)}%` }}>{int(st.value)}</div></div>
+              <span className="w-16 text-right text-xs text-ink-3 num">{i === 0 ? "100%" : pct((st.value / max) * 100)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {gap > 0 && <p className="mt-3 text-[11px] text-ink-3">Intenções de compra somaram {brl(f.intent_value)} contra {brl(f.gross_sales)} em vendas brutas: {brl(gap)} iniciados e não concluídos no período (parte pode ter sido concluída em outro dia).</p>}
+    </Card>
   );
 }
 

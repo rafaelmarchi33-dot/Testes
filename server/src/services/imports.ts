@@ -59,6 +59,23 @@ export const IMPORT_KINDS: Record<string, ImportKindDef> = {
       { key: "channel", label: "Canal", type: "text", synonyms: ["canal"] },
     ],
   },
+  daily_metrics: {
+    key: "daily_metrics", label: "Métricas diárias de desempenho", description: "Relatório do ML “Métricas do desempenho dos seus produtos” (uma linha por dia: visitas, intenção de compra e vendas).",
+    fields: [
+      { key: "date", label: "Data", type: "date", required: true, synonyms: ["data", "dia", "date"] },
+      { key: "unique_visits", label: "Visitas únicas", type: "int", required: true, synonyms: ["visitas unicas"] },
+      { key: "total_visits", label: "Total de visitas", type: "int", synonyms: ["total de visitas"] },
+      { key: "likes", label: "Curtidas", type: "int", synonyms: ["curtir", "curtidas", "gostei"] },
+      { key: "intent_unique_visitors", label: "Visitas únicas com intenção", type: "int", synonyms: ["visitas unicas com intencao de compra"] },
+      { key: "intent_units", label: "Unidades com intenção", type: "int", synonyms: ["unidades com intencao de compra"] },
+      { key: "intent_count", label: "Intenções de compra", type: "int", synonyms: ["quantidade de intencoes de compra"] },
+      { key: "intent_value", label: "Valor de intenção (R$)", type: "money", synonyms: ["valor bruto de intencao de compra"] },
+      { key: "sales_count", label: "Quantidade de vendas", type: "int", required: true, synonyms: ["quantidade de vendas"] },
+      { key: "unique_buyers", label: "Compradores únicos", type: "int", synonyms: ["compradores unicos"] },
+      { key: "units", label: "Unidades vendidas", type: "int", synonyms: ["unidades vendidas"] },
+      { key: "gross_sales", label: "Vendas brutas (R$)", type: "money", required: true, synonyms: ["vendas brutas"] },
+    ],
+  },
   ads: {
     key: "ads", label: "Publicidade", description: "Relatório de campanhas (Product Ads ou Shopee Ads) por dia.",
     fields: [
@@ -127,8 +144,9 @@ export function parseCsv(text: string): string[][] {
 async function parseXlsx(file: string): Promise<string[][]> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(file);
-  // Usa a planilha com mais linhas preenchidas
-  const sheet = [...wb.worksheets].sort((a, b) => b.actualRowCount - a.actualRowCount)[0];
+  // Usa a planilha com mais células preenchidas (abas de "Definições" têm muitas linhas e poucas colunas)
+  const filled = (ws: ExcelJS.Worksheet) => { let n = 0; ws.eachRow({ includeEmpty: false }, (r) => { r.eachCell({ includeEmpty: false }, () => { n++; }); }); return n; };
+  const sheet = [...wb.worksheets].sort((a, b) => filled(b) - filled(a))[0];
   if (!sheet) return [];
   const rows: string[][] = [];
   sheet.eachRow({ includeEmpty: false }, (r) => {
@@ -205,10 +223,12 @@ function scoreHeader(h: string, f: FieldDef): number {
   const n = normalize(h);
   if (!n) return 0;
   let best = 0;
+  const padded = ` ${n} `;
   for (const syn of f.synonyms) {
+    // comparação por palavras inteiras: "de" não deve casar com "unidades"
     if (n === syn) best = Math.max(best, 100 + syn.length);
-    else if (n.startsWith(syn)) best = Math.max(best, 60 + syn.length);
-    else if (n.includes(syn)) best = Math.max(best, 30 + syn.length);
+    else if (padded.startsWith(` ${syn} `)) best = Math.max(best, 60 + syn.length);
+    else if (padded.includes(` ${syn} `)) best = Math.max(best, 30 + syn.length);
   }
   return best;
 }
@@ -235,6 +255,20 @@ export function autoMap(headers: string[], def: ImportKindDef): Record<string, n
     used.add(c.i);
   }
   return map;
+}
+
+/** Sugere o tipo de importação examinando as primeiras linhas (o cabeçalho pode não ser a primeira). */
+export function guessKindFromRows(rows: string[][]): string {
+  let best = { k: "orders", s: -1 };
+  for (const r of rows.slice(0, 20)) {
+    const k = guessKind(r.map((c) => String(c ?? "")));
+    const def = IMPORT_KINDS[k]!;
+    const m = autoMap(r.map((c) => String(c ?? "")), def);
+    const req = def.fields.filter((f) => f.required);
+    const sc = req.filter((f) => m[f.key] !== null).length / req.length * 10 + Object.values(m).filter((v) => v !== null).length;
+    if (sc > best.s) best = { k, s: sc };
+  }
+  return best.k;
 }
 
 /** Sugere o tipo de importação a partir dos cabeçalhos. */
@@ -307,7 +341,10 @@ export function buildPreview(kind: string, rows: string[][], mapping?: Record<st
   const headerRow = findHeaderRow(rows, def);
   const headers = (rows[headerRow] ?? []).map((h) => String(h ?? "").trim());
   const map = mapping ?? autoMap(headers, def);
-  const body = rows.slice(headerRow + 1).filter((r) => r.some((c) => String(c ?? "").trim() !== ""));
+  const body = rows.slice(headerRow + 1)
+    .filter((r) => r.some((c) => String(c ?? "").trim() !== ""))
+    // linhas de totalização dos relatórios do ML não são dados
+    .filter((r) => !/^(valores totais|total( geral)?\b)/.test(normalize(String(r.find((c) => String(c ?? "").trim() !== "") ?? ""))));
   const parsed: ParsedRow[] = body.map((r, i) => {
     const out: ParsedRow = { row: headerRow + i + 2, values: {}, errors: [], warnings: [] };
     for (const f of def.fields) {
@@ -373,6 +410,13 @@ function validateKind(kind: string, rows: ParsedRow[]) {
       if (v.sku) seen.add(v.sku);
       if (v.weight_g !== null && v.weight_g <= 0) r.errors.push("Peso deve ser positivo");
       if (v.print_minutes !== null && v.print_minutes <= 0) r.errors.push("Tempo deve ser positivo");
+    } else if (kind === "daily_metrics") {
+      const key = v.date?.day;
+      if (seen.has(key)) { r.duplicate = true; r.errors.push("Data duplicada no arquivo"); }
+      seen.add(key);
+      for (const k of ["unique_visits", "sales_count", "units", "gross_sales"]) if (v[k] !== null && v[k] < 0) r.errors.push(`${k} negativo`);
+      if (v.sales_count > 0 && !v.gross_sales) r.warnings.push("Vendas sem valor bruto");
+      if (key && q.get("SELECT 1 FROM daily_metrics WHERE date=? AND channel='mercadolivre'", [key])) { r.duplicate = true; r.errors.push("Métricas desta data já importadas"); }
     } else if (kind === "period_report") validatePeriod(r);
   }
 }
@@ -483,6 +527,16 @@ export function commitImport(importId: number, kind: string, parsed: ParsedRow[]
         );
         imported++;
       }
+    } else if (kind === "daily_metrics") {
+      for (const r of ok) {
+        const v = r.values;
+        q.run(`INSERT INTO daily_metrics (channel, date, unique_visits, total_visits, likes, intent_unique_visitors, intent_units, intent_count, intent_value, sales_count, unique_buyers, units, gross_sales, source, import_id)
+          VALUES ('mercadolivre',?,?,?,?,?,?,?,?,?,?,?,?, 'import', ?)`,
+          [v.date.day, v.unique_visits, v.total_visits, v.likes, v.intent_unique_visitors, v.intent_units, v.intent_count, v.intent_value, v.sales_count, v.unique_buyers, v.units, v.gross_sales, importId]);
+        // visitas únicas alimentam a conversão (mesma definição do ML: vendas ÷ visitas únicas)
+        q.run("INSERT INTO visits_daily (scope, date, visits, import_id) VALUES ('store',?,?,?) ON CONFLICT DO NOTHING", [v.date.day, v.unique_visits, importId]);
+        imported++;
+      }
     } else if (kind === "visits") {
       for (const r of ok) {
         const v = r.values;
@@ -528,6 +582,7 @@ export function undoImport(importId: number) {
     del("ads_campaign_daily", "DELETE FROM ads_campaign_daily WHERE import_id=?");
     del("ads_campaigns", "DELETE FROM ads_campaigns WHERE import_id=? AND id NOT IN (SELECT campaign_id FROM ads_campaign_daily)");
     del("visits_daily", "DELETE FROM visits_daily WHERE import_id=?");
+    del("daily_metrics", "DELETE FROM daily_metrics WHERE import_id=?");
     for (const u of summary.updates ?? []) {
       if (u.table === "listings") q.run("UPDATE listings SET visits_total=?, quality_score=? WHERE id=?", [u.prev.visits_total, u.prev.quality_score, u.id]);
       if (u.table === "products" && u.created) q.run("DELETE FROM products WHERE id=? AND NOT EXISTS (SELECT 1 FROM listings WHERE product_id=?)", [u.id, u.id]);

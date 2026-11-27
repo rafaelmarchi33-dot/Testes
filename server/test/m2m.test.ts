@@ -192,3 +192,45 @@ test("rotinas e DRE geram dados determinísticos", () => {
 });
 
 void fs; void path;
+
+test("relatório 'Métricas do desempenho' do ML: diário, sem dupla contagem com o relatório agregado", async () => {
+  const { guessKindFromRows } = await import("../src/services/imports.ts");
+  const rows = [
+    ["Métricas do desempenho dos seus produtos"], ["Este relatório contém as métricas gerais…"], ["Nota: este relatório inclui apenas o \"total de visitas\" até ontem."],
+    ["", "Visitas", "Visitas", "Visitas", "Intenção de compra", "Intenção de compra", "Intenção de compra", "Intenção de compra", "Intenção de compra", "Vendas brutas", "Vendas brutas", "Vendas brutas", "Vendas brutas", "Vendas brutas"],
+    ["Data", "Visitas únicas", "Total de visitas", "Curtir", "Visitas únicas com intenção de compra", "Unidades com intenção de compra", "Conversão de visitas em intenção de compra", "Quantidade de intenções de compra", "Valor bruto de intenção de compra (BRL)", "Quantidade de vendas", "Compradores únicos", "Unidades vendidas", "Vendas brutas (ARS)", "Conversão de visitas em vendas"],
+    ["19/11/26", "54", "93", "1", "5", "8", "9,26%", "8", "380", "6", "5", "8", "357.89", "11,11%"],
+    ["20/11/26", "21", "43", "1", "3", "5", "14,29%", "5", "238", "4", "4", "4", "190", "19,05%"],
+    ["21/11/26", "42", "69", "1", "4", "13", "9,52%", "7", "618", "1", "2", "1", "47.5", "2,38%"],
+    ["22/11/26", "32", "60", "1", "2", "2", "6,25%", "2", "95", "1", "0", "1", "47.5", "3,13%"],
+    ["23/11/26", "62", "101", "2", "6", "8", "9,68%", "8", "363", "7", "7", "7", "312.83", "11,29%"],
+    ["24/11/26", "138", "188", "1", "4", "7", "2,90%", "7", "324", "8", "8", "8", "368.14", "5,80%"],
+    ["25/11/26", "107", "157", "1", "6", "7", "5,61%", "7", "320", "5", "5", "5", "322.65", "4,67%"],
+    ["26/11/26", "79", "0", "1", "4", "6", "5,06%", "6", "270", "5", "3", "5", "225", "6,33%"],
+    ["Valores totais do período", "45", "45", "45", "45", "45", "", "45", "45", "45", "45", "45", "45", ""],
+  ];
+  assert.equal(guessKindFromRows(rows), "daily_metrics");
+  const p = buildPreview("daily_metrics", rows);
+  assert.equal(p.parsed.length, 8, "linha de totais ignorada");
+  assert.ok(p.parsed.every((r) => !r.errors.length));
+  const imp = Number(q.run("INSERT INTO imports (kind, filename, original_name) VALUES ('daily_metrics','d.xlsx','d.xlsx')").lastInsertRowid);
+  assert.equal(commitImport(imp, "daily_metrics", p.parsed, 1).imported, 8);
+
+  const ov = overview("custom", "2026-11-19", "2026-11-26");
+  assert.equal(ov.data_source, "daily_metrics");
+  assert.equal(Math.round(ov.kpis.revenue * 100) / 100, 1871.51);
+  assert.equal(ov.kpis.orders, 37);
+  assert.equal(ov.kpis.units, 39);
+  assert.equal(ov.kpis.visits, 535);
+  assert.ok(Math.abs(ov.kpis.conversion_pct! - 6.92) < 0.01);
+  assert.equal(ov.changes.revenue, 79.1, "anterior derivado do relatório agregado do mesmo período");
+  assert.equal(ov.funnel.intent_unique_visitors, 34);
+  assert.equal(ov.charts.daily!.find((d: any) => d.date === "2026-11-24")!.revenue, 368.14);
+  // a meta não soma o relatório agregado de novo
+  const g = goalProgress(new Date("2026-11-27T15:00:00Z"));
+  assert.equal(Math.round(g.revenue * 100) / 100, 1871.51);
+  assert.equal(g.from_reports, 0);
+  undoImport(imp);
+  assert.equal(goalProgress(new Date("2026-11-27T15:00:00Z")).revenue, 1872);
+  assert.equal(q.get<any>("SELECT COUNT(*) n FROM visits_daily WHERE scope='store'")!.n, 0);
+});
