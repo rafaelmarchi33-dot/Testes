@@ -3,6 +3,8 @@
 Caminho recomendado: **Railway** (hospedagem com HTTPS, volume persistente e deploy automático pelo GitHub) + **registro.br** (domínio) + **DevCenter do Mercado Livre** + **Console da Anthropic** (IA).
 Tempo estimado: 1 a 2 horas. O repositório já tem `Dockerfile` e `railway.json` prontos.
 
+Verificado antes da entrega: instalação limpa (`npm ci`), build e remoção das dependências de desenvolvimento exatamente como o `Dockerfile` faz; o servidor sobe em modo produção, recusa iniciar sem `ENCRYPTION_KEY`, serve a interface, usa cookie `Secure`/`HttpOnly`, cabeçalhos HSTS e anti-clickjacking, e grava banco, uploads e backups em `DATA_DIR`.
+
 Endereço usado nos exemplos: `https://painel.mind2matter.com.br` — troque pelo seu.
 
 ---
@@ -22,7 +24,8 @@ Endereço usado nos exemplos: `https://painel.mind2matter.com.br` — troque pel
 
 | # | O que fazer | Onde |
 |---|---|---|
-| 2.1 | Abrir um Pull Request do branch `claude/mercado-livre-intelligence-fomvc7` para `main` e fazer o merge | GitHub → repositório `Testes` → Pull requests |
+| 2.1 | Abrir um Pull Request do branch `claude/mind2matter-intelligence-platform-8hfymf` para `main` e fazer o merge | GitHub → repositório `Testes` → Pull requests |
+| 2.2 | (Opcional) Rodar `npm test` e `npm run audit` localmente antes do merge | Terminal |
 
 ## 3. Servidor (Railway)
 
@@ -66,24 +69,28 @@ Endereço usado nos exemplos: `https://painel.mind2matter.com.br` — troque pel
 
 | # | O que fazer | Onde |
 |---|---|---|
-| 5.1 | **Criar o administrador imediatamente** — o primeiro cadastro vira administrador | `https://painel.mind2matter.com.br` |
-| 5.2 | Conectar a loja: *Conectar minha conta* → autorizar com a conta da loja | Sistema → Integrações e ajustes |
-| 5.3 | Aguardar a importação e conferir a tabela *Sincronização* (todos "ok"; Publicidade pode mostrar indisponível se não houver Product Ads) | Sistema → Integrações e ajustes |
-| 5.4 | Preencher parâmetros: margem-alvo, margem mínima, impostos (% do Simples), custos fixos mensais, mão de obra/hora | Sistema → Integrações → *Parâmetros* |
-| 5.5 | Cadastrar a **ficha de custos** de cada produto (sem ela não há lucro calculado) | Sistema → Financeiro → *Fichas de custo* |
-| 5.6 | Conferir estoque inicial, estoque mínimo, prazo de produção e produtos **sob demanda** | Sistema → Estoque e produção |
-| 5.7 | (Opcional) Cadastrar outros usuários: Operador ou Leitura | Sistema → Integrações → *Usuários* |
+| 5.1 | **Criar o administrador imediatamente** — enquanto não houver usuário, quem abrir o endereço primeiro vira administrador | `https://painel.mind2matter.com.br` |
+| 5.2 | Conectar a loja: *Conectar* → autorizar com a conta da loja | Integrações e ajustes (status também em Mercado Livre Seller › Conexão) |
+| 5.3 | Aguardar a primeira sincronização e conferir a tabela por recurso (todos "ok"; Publicidade pode ficar indisponível sem Product Ads) | Mercado Livre Seller › Conexão e sincronização |
+| 5.4 | **Unificar o anúncio da importação inicial** ("Ímã de reposição para Hollyland Lark M2") com o anúncio real sincronizado | Mercado Livre Seller → abrir o anúncio → *Unificar* |
+| 5.5 | Preencher o **cadastro de custos**: preço do filamento PLA/PETG por kg, energia (R$/kWh), consumo da A1, depreciação e manutenção por hora, mão de obra, embalagem, acabamento, perdas, impostos (% do seu regime), custos fixos mensais | Financeiro — CFO › Cadastro de custos |
+| 5.6 | Preencher as **tarifas** do Mercado Livre e da Shopee (ou por anúncio, quando diferirem) | Financeiro — CFO › Cadastro de custos / detalhe do anúncio |
+| 5.7 | Informar **peso e tempo de impressão** dos produtos — pela calculadora (*Salvar no produto*) ou importando a planilha de produtos | Financeiro — CFO › Calculadora · Importação › Produtos |
+| 5.8 | Completar a impressora (potência, valor, vida útil) e cadastrar os rolos de filamento com custo e estoque mínimo | Mind Factory › Máquinas e Filamentos |
+| 5.9 | Importar históricos: relatório "Métricas do desempenho" do ML, vendas da Shopee e, se tiver, campanhas | Importação |
+| 5.10 | (Opcional) Cadastrar usuários Operador ou Leitura | Integrações e ajustes › Usuários |
 
 ## 6. Validação com dados reais
 
 | # | O que fazer | Resultado esperado |
 |---|---|---|
-| 6.1 | Gerar o relatório diário | Relatório com 8 seções citando seus números |
-| 6.2 | Criar um anúncio com uma foto e clicar **Validar no ML** (não publica) | "O Mercado Livre validou o anúncio sem erros" ou lista do que corrigir |
-| 6.3 | (Opcional) Publicar um anúncio de teste e depois pausá-lo pela Central de Aprovações | Link, ID e status retornados |
-| 6.4 | Após uma venda ou pergunta real, verificar se aparece no sistema em poucos minutos | Webhook funcionando |
-| 6.5 | Exportar um relatório em PDF e em Excel | Arquivos com o logo da marca |
-| 6.6 | No iPhone/iPad: Safari → Compartilhar → **Adicionar à Tela de Início** | Atalho com o logo Mind2Matter |
+| 6.1 | Comparar faturamento, pedidos e visitas dos últimos 7 dias com o painel do Mercado Livre | Mesmos números (a conversão usa visitas únicas, como o ML) |
+| 6.2 | Abrir um anúncio campeão e conferir margem e lucro por unidade com a calculadora | Valores coerentes com o cadastro de custos |
+| 6.3 | Perguntar ao Mind AI "Quanto faturamos nos últimos 7 dias?" e gerar o diagnóstico do CEO | Resposta citando seus números, com rótulos [REAL]/[ESTIMATIVA] |
+| 6.4 | Pedir uma alteração de preço pequena e aprovar na Central de Aprovações | Preço muda no ML; ação registrada na auditoria |
+| 6.5 | Após uma venda ou pergunta real, verificar se aparece no sistema em poucos minutos | Webhook funcionando |
+| 6.6 | Executar a "Rotina diária" e exportar um relatório em PDF e Excel | Resumo com dados e análise; arquivos com o logo |
+| 6.7 | Abrir no celular e adicionar à tela de início (Safari → Compartilhar) | Painel utilizável no celular |
 
 ## 7. Segurança e rotina
 
@@ -94,6 +101,7 @@ Endereço usado nos exemplos: `https://painel.mind2matter.com.br` — troque pel
 | 7.3 | Baixar um backup do volume periodicamente para fora do Railway | Railway → *Volumes* → *Backups* |
 | 7.4 | Acompanhar logs se algo falhar | Railway → serviço → *Deployments* → *View logs* |
 | 7.5 | Atualizações: todo merge em `main` gera um novo deploy automático | GitHub → Railway |
+| 7.6 | Manter o serviço sempre ligado (sem "sleep"): sincronização, alertas e rotinas usam o agendador interno | Railway → serviço → *Settings* |
 
 ## Problemas comuns
 
@@ -105,3 +113,5 @@ Endereço usado nos exemplos: `https://painel.mind2matter.com.br` — troque pel
 | Publicidade "indisponível" | Conta sem Product Ads ativo ou app sem permissão de Publicidade |
 | Pesquisa de mercado com aviso de limitação | Busca pública restrita para o app; o sistema usa a busca de catálogo |
 | Dados somem após novo deploy | Volume não montado em `/data` ou `DATA_DIR` diferente de `/data` |
+| Mind AI mostra "integração indisponível" | `ANTHROPIC_API_KEY` ausente, inválida ou sem créditos |
+| Rotinas não rodam no horário | Serviço dormindo/reiniciando; confira os logs e se há 1 réplica sempre ativa |
