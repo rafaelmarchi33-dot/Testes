@@ -25,7 +25,7 @@ export function Card({ children, className, title, action, subtitle, pad = true 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
 export function Button({ variant = "secondary", size = "md", loading, icon, children, className, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md"; loading?: boolean; icon?: ReactNode }) {
   const styles: Record<Variant, string> = {
-    primary: "bg-brand text-white font-semibold hover:bg-brand-2 shadow-[0_6px_18px_-8px_rgba(242,106,27,0.7)] dark:text-[#0b0b0d]",
+    primary: "bg-brand text-white font-semibold hover:bg-brand-2 shadow-[0_6px_18px_-8px_rgba(16,185,129,0.7)] dark:text-[#04130d]",
     secondary: "bg-surface border border-line text-ink hover:bg-surface-2",
     ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
     danger: "bg-bad text-white hover:opacity-90 dark:text-[#0b0b10]",
@@ -49,9 +49,11 @@ export function Button({ variant = "secondary", size = "md", loading, icon, chil
 }
 
 const field = "w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand transition";
-export const Input = (p: InputHTMLAttributes<HTMLInputElement>) => <input {...p} className={cx(field, "h-9", p.className)} />;
-export const Select = ({ children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) => <select {...p} className={cx(field, "h-9 pr-8", p.className)}>{children}</select>;
-export const Textarea = (p: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={cx(field, "py-2 min-h-24", p.className)} />;
+/** Base dos campos; uma largura explícita (w-*) em className substitui o w-full padrão. */
+const fieldCls = (c?: string) => (/(^|\s)w-/.test(c ?? "") ? field.replace("w-full ", "") : field);
+export const Input = (p: InputHTMLAttributes<HTMLInputElement>) => <input {...p} className={cx(fieldCls(p.className), "h-9", p.className)} />;
+export const Select = ({ children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) => <select {...p} className={cx(fieldCls(p.className), "h-9 pr-8", p.className)}>{children}</select>;
+export const Textarea = (p: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={cx(fieldCls(p.className), "py-2 min-h-24", p.className)} />;
 export function Field({ label, hint, children, className }: { label: ReactNode; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <label className={cx("block", className)}>
@@ -267,4 +269,71 @@ export function useToast() {
     <div className={cx("fixed bottom-4 right-4 z-[60] rounded-lg px-4 py-2.5 text-sm shadow-lg animate-in", msg.tone === "good" ? "bg-ink text-bg" : "bg-bad text-white")}>{msg.text}</div>
   );
   return { toast: (text: string, tone: "good" | "bad" = "good") => setMsg({ text, tone }), node };
+}
+
+/** Bloco explícito de informação pendente (nunca preenchemos gráficos com dados fictícios). */
+export function Pending({ title = "Informação pendente", children, action }: { title?: string; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-line px-4 py-8 text-center">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</span>
+      {children && <p className="max-w-sm text-xs text-ink-3">{children}</p>}
+      {action && <div className="mt-2">{action}</div>}
+    </div>
+  );
+}
+
+/** Origem do dado: real (API/pedidos), importado, estimativa, derivado. */
+export function SourceTag({ kind }: { kind: "api" | "orders" | "report" | "initial_import" | "import" | "estimate" | "derived" | "manual" | string }) {
+  const map: Record<string, [string, Tone]> = {
+    api: ["API", "good"], orders: ["Pedidos", "good"], report: ["Relatório importado", "info"], initial_import: ["Importação inicial", "info"],
+    import: ["Importado", "info"], estimate: ["Estimativa", "warn"], derived: ["Derivado", "neutral"], manual: ["Manual", "neutral"], report_derived: ["Derivado do relatório", "neutral"],
+  };
+  const [label, tone] = map[kind] ?? [kind, "neutral" as Tone];
+  return <Badge tone={tone}>{label}</Badge>;
+}
+
+/** Baixa um arquivo da API (cookie de sessão) preservando o nome sugerido pelo servidor. */
+export async function download(path: string) {
+  const res = await fetch(`/api${path}`, { headers: { "X-Requested-With": "mli" }, credentials: "same-origin" });
+  if (!res.ok) { const t = await res.json().catch(() => ({})); throw new Error(t.error ?? `Erro ${res.status}`); }
+  const blob = await res.blob();
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "relatorio";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+export function ExportButtons({ path, label = "Exportar" }: { path: string; label?: string }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async (fmt: string) => { setBusy(fmt); setErr(null); try { await download(`${path}${path.includes("?") ? "&" : "?"}format=${fmt}`); } catch (e) { setErr((e as Error).message); } finally { setBusy(null); } };
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="hidden text-[11px] text-ink-3 sm:inline">{label}</span>
+      <Button size="sm" loading={busy === "xlsx"} onClick={() => go("xlsx")}>Excel</Button>
+      <Button size="sm" loading={busy === "pdf"} onClick={() => go("pdf")}>PDF</Button>
+      {err && <span className="text-[11px] text-bad">{err}</span>}
+    </div>
+  );
+}
+
+export function NumInput({ value, onChange, ...p }: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & { value: number | null | undefined; onChange: (v: number | null) => void }) {
+  return <Input type="number" inputMode="decimal" step="any" value={value ?? ""} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} {...p} />;
+}
+
+export function Kpi({ label, value, hint, delta, invert, source, icon, tone }: { label: string; value: ReactNode; hint?: ReactNode; delta?: number | null; invert?: boolean; source?: string; icon?: ReactNode; tone?: Tone }) {
+  return (
+    <div className="group rounded-xl border border-line bg-surface p-4 transition hover:border-brand/30 animate-in">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3">{label}</span>
+        {icon && <span className={cx("text-ink-3 [&_svg]:size-4", tone === "bad" && "text-bad", tone === "warn" && "text-warn", tone === "good" && "text-good")}>{icon}</span>}
+      </div>
+      <div className="mt-1.5 text-[22px] font-semibold tracking-tight num leading-tight">{value}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 min-h-4">
+        {delta !== undefined && delta !== null && <Delta value={delta} invert={invert} />}
+        {hint && <span className="text-[11px] leading-tight text-ink-3">{hint}</span>}
+        {source && <SourceTag kind={source} />}
+      </div>
+    </div>
+  );
 }

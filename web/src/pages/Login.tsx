@@ -17,14 +17,14 @@ export default function Login({ needsSetup, onDone }: { needsSetup: boolean; onD
   };
   return (
     <div className="grid min-h-full lg:grid-cols-2">
-      <div className="carbon relative hidden overflow-hidden lg:flex flex-col items-center justify-center gap-10 p-12 text-cream">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(242,106,27,0.18),transparent_60%)]" />
-        <M2Mark large className="relative w-full max-w-[380px] drop-shadow-[0_20px_60px_rgba(242,106,27,0.35)]" />
+      <div className="command-bg relative hidden overflow-hidden lg:flex flex-col items-center justify-center gap-10 p-12 text-cream">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(16,185,129,0.22),transparent_60%)]" />
+        <M2Mark large className="relative w-full max-w-[380px] drop-shadow-[0_20px_60px_rgba(16,185,129,0.35)]" />
         <div className="relative max-w-md text-center">
           <div className="filament mx-auto mb-5 w-40" />
-          <h2 className="text-3xl font-semibold leading-tight tracking-tight">Da ideia à peça. Da peça à venda.</h2>
-          <p className="mt-3 text-sm text-cream/70">Vendas, margens e oportunidades da sua loja no Mercado Livre em um só lugar — com dados reais e nenhuma alteração sem a sua aprovação.</p>
-          <p className="mt-6 text-[11px] tracking-[0.2em] text-[#f26a1b]">MERCADO LIVRE INTELLIGENCE</p>
+          <h2 className="text-3xl font-semibold leading-tight tracking-tight">Central de comando da Mind2Matter.</h2>
+          <p className="mt-3 text-sm text-cream/70">Vendas, lucro, produção, produtos e crescimento em um só lugar — com dados reais, inteligência artificial e nenhuma alteração sem a sua aprovação.</p>
+          <p className="mt-6 text-[11px] tracking-[0.2em] text-[#34d399]">MIND2MATTER INTELLIGENCE</p>
         </div>
       </div>
       <div className="flex items-center justify-center p-6">

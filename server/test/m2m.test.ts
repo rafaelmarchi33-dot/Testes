@@ -88,6 +88,8 @@ test("importação: formatos brasileiros, auto-mapeamento, validação, efetiva�
   assert.equal(parseDate("26 de novembro de 2026 14:30 hs.")!.day, "2026-11-26");
   assert.equal(parseDate("19/11/2026")!.day, "2026-11-19");
   assert.equal(parseDate("31/02/x"), null);
+  const future = buildPreview("orders", parseCsv("N.º de venda;Data da venda;Unidades;Preço unitário;SKU\n9;01/01/2099;1;10;X"));
+  assert.ok(future.parsed[0]!.errors.includes("Data no futuro"));
 
   const csv = [
     "Vendas;;;;;;",

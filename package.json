@@ -1,8 +1,8 @@
 {
-  "name": "mercado-livre-intelligence",
+  "name": "mind2matter-intelligence",
   "private": true,
   "version": "1.0.0",
-  "description": "Plataforma de gestão comercial, IA e automação de vendas para lojas no Mercado Livre",
+  "description": "Mind2Matter Intelligence — gestão, inteligência comercial, produção 3D e crescimento",
   "scripts": {
     "install:all": "npm --prefix server install && npm --prefix web install",
     "dev:server": "npm --prefix server run dev",

@@ -340,6 +340,7 @@ function validateKind(kind: string, rows: ParsedRow[]) {
   const seen = new Set<string>();
   for (const r of rows) {
     const v = r.values;
+    if (v.date?.iso && Date.parse(v.date.iso) > Date.now() + 5 * 60_000) r.errors.push("Data no futuro");
     if (kind === "orders") {
       if (v.quantity !== null && v.quantity <= 0) r.errors.push("Quantidade deve ser maior que zero");
       if (v.unit_price === null && v.total === null) r.errors.push("Informe preço unitário ou receita do item");
