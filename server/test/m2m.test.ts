@@ -305,3 +305,60 @@ test("auditoria: pedidos + métricas no mesmo período, período da central e al
   evaluateAlerts(new Date("2026-11-27T20:00:00Z"));
   assert.ok(!q.get("SELECT 1 FROM alerts WHERE type='conversion_drop' AND status!='resolved'"), "conversão estável (7%) não gera alerta");
 });
+
+test("vendas importadas criam o anúncio real e o produto por SKU (e o desfazer remove)", async () => {
+  const { listingsCenter } = await import("../src/services/listingsIntel.ts");
+  const { saveCostConfig } = await import("../src/services/costs3d.ts");
+  const csv = [
+    "N.º de venda;Data de venda;Estado;Unidades;Receita por produtos (BRL);Tarifa de venda e impostos (BRL);SKU;# de anúncio;Título do anúncio;Preço unitário de venda do anúncio (BRL)",
+    "4100001;10/11/2026 10:00;Entregue;1;45;-12,55;IMA01;MLB5548604875;Ímã Lark M2;45",
+    "4100002;20/11/2026 10:00;Entregue;2;94;-25,10;IMA01;MLB5548604875;Ímã Lark M2;47",
+    "4100003;05/11/2026 10:00;Entregue;1;30;-8;;MLB777000111;Peça antiga;30",
+  ].join("\n");
+  const p = buildPreview("orders", parseCsv(csv));
+  const imp = Number(q.run("INSERT INTO imports (kind, filename, original_name) VALUES ('orders','v.csv','v.csv')").lastInsertRowid);
+  commitImport(imp, "orders", p.parsed, 1);
+  const l = q.get<any>("SELECT * FROM listings WHERE id='MLB5548604875'")!;
+  assert.equal(l.source, "import");
+  assert.equal(l.price, 47, "preço da venda mais recente");
+  const prod = q.get<any>("SELECT * FROM products WHERE sku='IMA01'")!;
+  assert.equal(l.product_id, prod.id);
+  assert.equal(prod.made_to_order, 1);
+  assert.equal(q.get<any>("SELECT product_id FROM listings WHERE id='MLB777000111'")!.product_id, null, "sem SKU: anúncio sem produto");
+  // ficha técnica no produto → margem calculada na central para o anúncio real
+  saveCostConfig({ filament_price_per_kg: { PLA: 100 }, energy_kwh_price: 1, printer_power_watts: 100, depreciation_per_hour: 0, maintenance_per_hour: 0, labor_per_hour: 0, labor_minutes_per_unit: 0, packaging_per_unit: 1, finishing_per_unit: 0, failure_rate_pct: 0, ads_pct: 0, tax_pct: 0, seller_shipping_per_unit: 0 });
+  q.run("UPDATE products SET weight_g=20, print_minutes=40, material='PLA' WHERE id=?", [prod.id]);
+  const row = listingsCenter({ days: 365 }).rows.find((r) => r.id === "MLB5548604875")!;
+  assert.equal(row.units_period, 3);
+  assert.ok(row.margin_pct !== null, `margem calculada (faltando: ${row.unit_missing})`);
+  const u = undoImport(imp);
+  assert.ok(u.removed.listings >= 2);
+  assert.ok(!q.get("SELECT 1 FROM products WHERE sku='IMA01'"), "produto criado pela importação removido");
+});
+
+test("migração 006: recria anúncios e produtos de vendas importadas antes dela", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { migrations } = await import("../src/db/schema.ts");
+  const { openDatabase } = await import("../src/db/index.ts");
+  const os = await import("node:os");
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "m006-")), "prod.db");
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  migrations.slice(0, 5).forEach((sql, i) => { db.exec(sql); db.prepare("INSERT INTO schema_migrations VALUES (?, 'x')").run(i + 1); });
+  // estado da produção: vendas importadas sem anúncio cadastrado
+  db.exec(`INSERT INTO orders (id, account_id, status, date_created, total_amount, channel, source, import_id) VALUES
+    (1, 0, 'paid', '2026-11-10T13:00:00.000Z', 45, 'mercadolivre', 'import', 2), (2, 0, 'paid', '2026-11-20T13:00:00.000Z', 94, 'mercadolivre', 'import', 2),
+    (3, 0, 'paid', '2026-10-09T13:00:00.000Z', 30, 'mercadolivre', 'import', 2);
+    INSERT INTO order_items (order_id, listing_id, title, quantity, unit_price, seller_sku) VALUES
+    (1, 'MLB5548604875', 'Ímã Lark M2', 1, 45, 'IMA01'), (2, 'MLB5548604875', 'Ímã Lark M2', 2, 47, 'IMA01'), (3, 'MLB777000111', 'Peça antiga', 1, 30, NULL);`);
+  db.close();
+  const migrated = openDatabase(file);
+  const l = migrated.prepare("SELECT * FROM listings WHERE id='MLB5548604875'").get() as any;
+  assert.equal(l.price, 47);
+  assert.equal(l.import_id, 2, "desfazer a importação #2 também remove o anúncio");
+  const p = migrated.prepare("SELECT * FROM products WHERE sku='IMA01'").get() as any;
+  assert.equal(l.product_id, p.id);
+  assert.ok(migrated.prepare("SELECT 1 FROM listings WHERE id='MLB777000111' AND product_id IS NULL").get());
+  assert.equal((migrated.prepare("SELECT MAX(version) v FROM schema_migrations").get() as any).v, 6);
+  migrated.close();
+});

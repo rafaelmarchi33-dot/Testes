@@ -20,6 +20,7 @@ export default function Imports() {
   const [err, setErr] = useState<Error | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [undo, setUndo] = useState<any>(null);
+  const [discard, setDiscard] = useState<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { toast, node } = useToast();
 
@@ -104,13 +105,18 @@ export default function Imports() {
             { key: "n", header: "Linhas", align: "right", render: (r: any) => `${int(r.rows_imported)} / ${int(r.rows_total)}` },
             { key: "d", header: "Data", render: (r: any) => dateTime(r.imported_at ?? r.created_at) },
             { key: "u", header: "Usuário", render: (r: any) => r.user_name ?? "—" },
-            { key: "x", header: "", render: (r: any) => r.status === "imported" && isAdmin(user) && <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} onClick={() => setUndo(r)}>Desfazer</Button> },
+            { key: "x", header: "", render: (r: any) => r.status === "imported" && isAdmin(user) ? <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} onClick={() => setUndo(r)}>Desfazer</Button>
+              : r.status === "preview" && canOperate(user) && prev?.import_id !== r.id ? <Button size="sm" variant="ghost" onClick={() => setDiscard(r)}>Descartar prévia</Button> : null },
           ]} />
         )}
       </Card>
       <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} title="Confirmar importação" confirmLabel="Importar"
         onConfirm={async () => { const r = await api(`/imports/${prev.import_id}/commit`, { body: { kind: prev.kind, mapping, confirm: true, values: prev.file_type === "pdf" ? pdfVals : undefined } }); toast(`${r.imported} linha(s) importada(s), ${r.skipped} ignorada(s)`); setPrev(null); hist.reload(); }}>
         Os dados válidos serão gravados e identificados como importados (é possível desfazer depois). Linhas com erro são ignoradas.
+      </ConfirmDialog>
+      <ConfirmDialog open={!!discard} onClose={() => setDiscard(null)} title="Descartar prévia" confirmLabel="Descartar"
+        onConfirm={async () => { await api(`/imports/${discard.id}`, { method: "DELETE", body: { confirm: true } }); toast("Prévia descartada"); hist.reload(); }}>
+        Remover a prévia #{discard?.id} ({discard?.original_name}) do histórico? Ela nunca foi importada; nenhum número muda.
       </ConfirmDialog>
       <ConfirmDialog open={!!undo} onClose={() => setUndo(null)} danger title="Desfazer importação" confirmLabel="Desfazer"
         onConfirm={async () => { const r = await api(`/imports/${undo.id}/undo`, { body: { confirm: true } }); toast(`Removidos: ${Object.entries(r.removed).filter(([, v]) => (v as number) > 0).map(([k, v]) => `${v} ${k}`).join(", ") || "nada"}`); hist.reload(); }}>

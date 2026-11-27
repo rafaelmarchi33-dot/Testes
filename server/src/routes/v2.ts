@@ -205,8 +205,10 @@ v2.post("/listings/:id/merge", admin, ah((req, res) => {
   const src = q.get<any>("SELECT * FROM listings WHERE id=?", [from]);
   const dst = q.get<any>("SELECT * FROM listings WHERE id=?", [into]);
   if (!src || !dst) throw new HttpError(404, "Anúncio não encontrado");
+  if (from === into) throw new HttpError(409, "Escolha um anúncio diferente");
   if (src.source === "api") throw new HttpError(409, "Somente anúncios importados podem ser unificados");
-  if (dst.source !== "api") throw new HttpError(409, "O destino deve ser um anúncio sincronizado do Mercado Livre");
+  // destino: anúncio real, sincronizado pela API ou vindo das vendas importadas (ID oficial MLB…)
+  if (dst.source === "initial_import") throw new HttpError(409, "O destino deve ser o anúncio real (sincronizado ou das vendas importadas)");
   q.tx(() => {
     if (src.product_id && dst.product_id && src.product_id !== dst.product_id) {
       const sp = q.get<any>("SELECT * FROM products WHERE id=?", [src.product_id]);
@@ -763,6 +765,16 @@ v2.post("/imports/:id/commit", operator, ah(async (req, res) => {
   const r = commitImport(imp.id, data.type === "pdf" ? "period_report" : b.kind, parsed, req.user!.id);
   audit(req.user!.id, "import.commit", "import", imp.id, r, req.ip);
   res.json(r);
+}));
+v2.delete("/imports/:id", operator, ah((req, res) => {
+  confirmSchema.parse(req.body);
+  const imp = q.get<any>("SELECT * FROM imports WHERE id=?", [id(req.params.id)]);
+  if (!imp) throw new HttpError(404, "Importação não encontrada");
+  if (imp.status !== "preview") throw new HttpError(409, "Só prévias não efetivadas podem ser descartadas; use Desfazer para importações efetivadas");
+  fs.rmSync(path.join(importDir, path.basename(imp.filename)), { force: true });
+  q.run("DELETE FROM imports WHERE id=?", [imp.id]);
+  audit(req.user!.id, "import.discard", "import", imp.id, { name: imp.original_name }, req.ip);
+  res.json({ ok: true });
 }));
 v2.post("/imports/:id/undo", admin, ah((req, res) => {
   confirmSchema.parse(req.body);
