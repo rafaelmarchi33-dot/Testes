@@ -244,4 +244,292 @@ CREATE TABLE opportunities (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 `,
+  /* 002 — Mind2Matter Intelligence: empresa, fábrica, laboratório, radar, concorrência, importações, metas, rotinas */ `
+CREATE TABLE companies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, segment TEXT,
+  monthly_revenue_min REAL, monthly_revenue_max REAL,   -- faturamento informado pelo dono (faixa)
+  monthly_goal REAL,                                     -- meta de faturamento bruto mensal
+  listings_identified INTEGER,                           -- anúncios identificados (informado)
+  channels TEXT, catalog TEXT, notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+/* Relatórios agregados por período (ex.: painel de métricas do ML exportado ou informado). */
+CREATE TABLE period_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel TEXT NOT NULL DEFAULT 'mercadolivre',
+  date_from TEXT NOT NULL, date_to TEXT NOT NULL,
+  gross_sales REAL, units INTEGER, sales_count INTEGER, visits INTEGER, conversion_pct REAL, avg_unit_price REAL,
+  var_gross_sales_pct REAL, var_units_pct REAL, var_sales_count_pct REAL, var_visits_pct REAL, var_avg_price_pct REAL, var_conversion_pp REAL,
+  source TEXT NOT NULL,             -- initial_import | import | manual
+  import_id INTEGER, notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+/* Canais de venda e tarifas configuráveis (nunca presumidas). */
+CREATE TABLE channels (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  fee_pct REAL, fixed_fee REAL, shipping_cost REAL, active INTEGER NOT NULL DEFAULT 1, notes TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE listing_fee_overrides (
+  listing_id TEXT PRIMARY KEY, fee_pct REAL, fixed_fee REAL, shipping_cost REAL, ads_pct REAL, notes TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+ALTER TABLE orders ADD COLUMN channel TEXT NOT NULL DEFAULT 'mercadolivre';
+ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'api';
+ALTER TABLE orders ADD COLUMN import_id INTEGER;
+ALTER TABLE listings ADD COLUMN channel TEXT NOT NULL DEFAULT 'mercadolivre';
+ALTER TABLE listings ADD COLUMN source TEXT NOT NULL DEFAULT 'api';
+ALTER TABLE listings ADD COLUMN import_id INTEGER;
+ALTER TABLE listings ADD COLUMN visits_total INTEGER;
+ALTER TABLE listings ADD COLUMN quality_score REAL;
+ALTER TABLE listings ADD COLUMN competition_status TEXT;
+ALTER TABLE ads_campaigns ADD COLUMN import_id INTEGER;
+ALTER TABLE ads_campaign_daily ADD COLUMN import_id INTEGER;
+ALTER TABLE visits_daily ADD COLUMN import_id INTEGER;
+ALTER TABLE products ADD COLUMN weight_g REAL;
+ALTER TABLE products ADD COLUMN print_minutes REAL;
+ALTER TABLE products ADD COLUMN material TEXT;
+ALTER TABLE products ADD COLUMN units_per_plate INTEGER;
+ALTER TABLE products ADD COLUMN lab_product_id INTEGER;
+
+CREATE VIEW customers AS
+  SELECT buyer_id id, MAX(buyer_nickname) nickname, channel, COUNT(*) orders, SUM(CASE WHEN status='paid' THEN total_amount ELSE 0 END) revenue,
+         MIN(date_created) first_order, MAX(date_created) last_order
+  FROM orders WHERE buyer_id IS NOT NULL GROUP BY buyer_id, channel;
+
+/* ---------- Fábrica ---------- */
+CREATE TABLE machines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, model TEXT NOT NULL, technology TEXT DEFAULT 'FDM', nozzle_mm REAL,
+  materials TEXT, build_volume TEXT, multicolor TEXT,
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','printing','maintenance','inactive')),
+  hours_worked REAL NOT NULL DEFAULT 0, hours_per_day REAL NOT NULL DEFAULT 16,
+  power_watts REAL, purchase_price REAL, lifetime_hours REAL, notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE machine_maintenance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+  date TEXT NOT NULL, type TEXT NOT NULL, description TEXT, cost REAL, hours_at REAL,
+  created_by INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE filaments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  brand TEXT, material TEXT NOT NULL, color TEXT,
+  total_g REAL NOT NULL DEFAULT 0, available_g REAL NOT NULL DEFAULT 0, min_g REAL NOT NULL DEFAULT 0,
+  cost_per_kg REAL, purchased_at TEXT, notes TEXT, active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE filament_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filament_id INTEGER NOT NULL REFERENCES filaments(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('purchase','consumption','adjust','waste')),
+  grams REAL NOT NULL, ref TEXT, reason TEXT,
+  created_by INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE UNIQUE INDEX idx_filament_idem ON filament_movements(filament_id, type, ref) WHERE ref IS NOT NULL;
+CREATE TABLE production_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  name TEXT NOT NULL, sku TEXT, quantity INTEGER NOT NULL CHECK (quantity > 0),
+  material TEXT, color TEXT, filament_id INTEGER REFERENCES filaments(id) ON DELETE SET NULL,
+  machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+  weight_g_unit REAL, minutes_unit REAL, units_per_plate INTEGER,
+  start_date TEXT, due_date TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
+  status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting','scheduled','printing','finishing','packing','done','cancelled')),
+  sale_price_unit REAL, notes TEXT, failed_units INTEGER NOT NULL DEFAULT 0,
+  completed_at TEXT, created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX idx_prod_status ON production_orders(status);
+
+/* ---------- Laboratório de produtos ---------- */
+CREATE TABLE lab_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, sku TEXT, category TEXT,
+  model_supplier TEXT, license TEXT, weight_g REAL, print_minutes REAL, material TEXT,
+  est_cost REAL, sale_price REAL,
+  status TEXT NOT NULL DEFAULT 'idea' CHECK (status IN ('idea','research','development','testing','approved','production','selling','discontinued')),
+  opportunity_id INTEGER, product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  description TEXT, notes TEXT, created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE lab_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lab_product_id INTEGER NOT NULL REFERENCES lab_products(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('image','stl','3mf','other')),
+  filename TEXT NOT NULL, original_name TEXT, size INTEGER,
+  created_by INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE lab_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lab_product_id INTEGER NOT NULL REFERENCES lab_products(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,     -- test | change | status | note
+  title TEXT NOT NULL, details TEXT, result TEXT,
+  created_by INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+/* ---------- Radar (oportunidades): pontuação 0–100 e separação observado x estimado ---------- */
+ALTER TABLE opportunities ADD COLUMN source TEXT NOT NULL DEFAULT 'ml_research';
+ALTER TABLE opportunities ADD COLUMN links TEXT;
+ALTER TABLE opportunities ADD COLUMN competitor_prices TEXT;
+ALTER TABLE opportunities ADD COLUMN observed TEXT;
+ALTER TABLE opportunities ADD COLUMN estimates TEXT;
+ALTER TABLE opportunities ADD COLUMN scores TEXT;
+ALTER TABLE opportunities ADD COLUMN score REAL;
+ALTER TABLE opportunities ADD COLUMN weight_g REAL;
+ALTER TABLE opportunities ADD COLUMN print_minutes REAL;
+ALTER TABLE opportunities ADD COLUMN lab_product_id INTEGER;
+
+/* ---------- Concorrência ---------- */
+CREATE TABLE competitors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, product TEXT, price REAL, url TEXT, ml_item_id TEXT,
+  rating REAL, reviews INTEGER, public_sales TEXT, differentials TEXT, photos_note TEXT, thumbnail TEXT,
+  our_listing_id TEXT, our_product_id INTEGER, our_price REAL,
+  analyzed_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', notes TEXT,
+  created_by INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+/* ---------- Importações ---------- */
+CREATE TABLE imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL, filename TEXT NOT NULL, original_name TEXT, file_type TEXT,
+  status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview','imported','undone','failed')),
+  mapping TEXT, headers TEXT, rows_total INTEGER DEFAULT 0, rows_imported INTEGER DEFAULT 0, rows_skipped INTEGER DEFAULT 0,
+  issues TEXT, summary TEXT, created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  imported_at TEXT, undone_at TEXT
+);
+
+/* ---------- Metas, despesas, marketing ---------- */
+CREATE TABLE goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, target_revenue REAL NOT NULL, deadline TEXT, kind TEXT NOT NULL DEFAULT 'milestone', achieved_at TEXT, notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL, category TEXT NOT NULL, description TEXT, amount REAL NOT NULL, recurring INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE marketing_contents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER, lab_product_id INTEGER, listing_id TEXT, name TEXT NOT NULL,
+  content TEXT NOT NULL, photo_plan TEXT, model TEXT, created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+/* ---------- IA: conversas ---------- */
+CREATE TABLE ai_conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent TEXT NOT NULL DEFAULT 'mind', title TEXT NOT NULL, user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE ai_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')), content TEXT NOT NULL, model TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+/* ---------- Alertas configuráveis e rotinas ---------- */
+CREATE TABLE alert_rules (
+  type TEXT PRIMARY KEY, label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  severity TEXT, threshold REAL, threshold_label TEXT
+);
+CREATE TABLE routines (
+  key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+  frequency TEXT NOT NULL CHECK (frequency IN ('daily','weekly','monthly_end')), weekday INTEGER, hour INTEGER NOT NULL DEFAULT 7,
+  enabled INTEGER NOT NULL DEFAULT 1, use_ai INTEGER NOT NULL DEFAULT 1, webhook_url TEXT,
+  last_run_at TEXT, last_status TEXT, next_run_at TEXT
+);
+CREATE TABLE routine_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  routine_key TEXT NOT NULL REFERENCES routines(key) ON DELETE CASCADE,
+  started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, trigger TEXT NOT NULL,
+  data TEXT, ai_summary TEXT, error TEXT
+);
+`,
+  /* 003 — dados iniciais reais informados pela Mind2Matter (identificados como importação inicial) */ `
+INSERT INTO companies (name, segment, monthly_revenue_min, monthly_revenue_max, monthly_goal, listings_identified, channels, catalog, notes) VALUES (
+  'Mind2Matter', 'Fabricação e comercialização de produtos por impressão 3D', 1000, 3000, 20000, 95,
+  '["Mercado Livre","Shopee","Outros marketplaces (futuro)"]',
+  '["Produtos funcionais","Organizadores","Acessórios tecnológicos","Acessórios gamer","Produtos personalizados","Colecionáveis","Decoração","Acessórios para criadores de conteúdo"]',
+  'Dados iniciais informados pelo proprietário: faturamento mensal entre R$ 1.000 e R$ 3.000, 95 anúncios identificados, meta de R$ 20.000/mês.'
+);
+INSERT INTO period_reports (channel, date_from, date_to, gross_sales, units, sales_count, visits, conversion_pct, avg_unit_price,
+  var_gross_sales_pct, var_units_pct, var_sales_count_pct, var_visits_pct, var_avg_price_pct, var_conversion_pp, source, notes)
+VALUES ('mercadolivre', '2026-11-19', '2026-11-26', 1872, 39, 37, 534, 6.9, 48, 79.1, 85.7, 106, 311, -3.5, -7, 'initial_import',
+  'Relatório de métricas do Mercado Livre informado na implantação. Variações em relação ao período anterior de mesma duração.');
+INSERT INTO channels (id, name, fee_pct, fixed_fee, shipping_cost, active, notes) VALUES
+  ('mercadolivre', 'Mercado Livre', NULL, NULL, NULL, 1, 'Tarifas não informadas: configure ou use a tarifa oficial consultada pela API.'),
+  ('shopee', 'Shopee', NULL, NULL, NULL, 1, 'Tarifas não informadas: configure antes de calcular margens deste canal.');
+INSERT INTO machines (name, model, technology, nozzle_mm, materials, build_volume, multicolor, status, notes)
+VALUES ('A1 Combo #1', 'Bambu Lab A1 Combo', 'FDM', 0.4, '["PLA","PETG"]', '256 × 256 × 256 mm', 'AMS lite (até 4 cores)', 'available',
+  'Equipamento inicial informado. Potência, valor de compra e horas trabalhadas não informados — preencha para calcular energia e depreciação.');
+INSERT INTO products (sku, name, category, made_to_order, stock_qty, notes)
+VALUES (NULL, 'Ímã de reposição para Hollyland Lark M2', 'Acessórios para criadores de conteúdo', 1, 0,
+  'Produto identificado na importação inicial. Estoque físico e custos não informados.');
+INSERT INTO listings (id, account_id, product_id, title, price, original_price, currency_id, available_quantity, status, health, quality_score, competition_status, channel, source, synced_at)
+VALUES ('INICIAL-HOLLYLAND-M2', 0, (SELECT id FROM products WHERE name='Ímã de reposição para Hollyland Lark M2'),
+  'Ímã de reposição para Hollyland Lark M2', 45, 50, 'BRL', 949, 'active', 0.94, 94,
+  'Ganhando — recebendo a maioria das visitas', 'mercadolivre', 'initial_import', '2026-11-26T23:59:00.000Z');
+INSERT INTO goals (name, target_revenue, kind, notes) VALUES
+  ('Meta principal mensal', 20000, 'main', 'Faturamento bruto mensal'),
+  ('Marco 1 — consolidar R$ 5 mil/mês', 5000, 'milestone', 'Meta intermediária sugerida; ajuste conforme o plano'),
+  ('Marco 2 — R$ 10 mil/mês', 10000, 'milestone', NULL),
+  ('Marco 3 — R$ 15 mil/mês', 15000, 'milestone', NULL);
+INSERT INTO alert_rules (type, label, enabled, severity, threshold, threshold_label) VALUES
+  ('out_of_stock','Anúncio sem estoque',1,'critical',NULL,NULL),
+  ('low_stock','Estoque interno abaixo do mínimo',1,'warning',NULL,NULL),
+  ('champion_low_stock','Produto campeão com estoque baixo',1,'critical',7,'dias de cobertura mínima'),
+  ('unanswered_questions','Perguntas aguardando resposta',1,NULL,NULL,NULL),
+  ('shipping_deadline','Prazo de postagem',1,'critical',NULL,NULL),
+  ('sales_spike','Produto vendendo acima da média',1,'opportunity',NULL,NULL),
+  ('performance_drop','Anúncio perdeu desempenho',1,'warning',40,'% de queda em unidades (30d)'),
+  ('stale_listing','Anúncio parado',1,'info',NULL,NULL),
+  ('low_margin','Margem abaixo do mínimo',1,'warning',NULL,NULL),
+  ('negative_margin','Produto com margem negativa',1,'critical',0,'% de margem'),
+  ('price_increase_opportunity','Oportunidade de aumentar preço',1,'opportunity',NULL,NULL),
+  ('cancellations','Aumento de cancelamentos',1,'warning',NULL,NULL),
+  ('campaign_potential','Produto com potencial para campanha',1,'opportunity',NULL,NULL),
+  ('campaign_no_return','Campanha consumindo orçamento sem retorno',1,'warning',35,'% de ACOS máximo'),
+  ('conversion_drop','Queda de conversão',1,'warning',2,'pontos percentuais de queda'),
+  ('below_goal','Faturamento abaixo da trajetória da meta',1,'warning',90,'% da trajetória esperada'),
+  ('filament_low','Filamento abaixo do mínimo',1,'warning',NULL,NULL),
+  ('production_delay','Risco de atraso na produção',1,'critical',NULL,NULL),
+  ('market_opportunity','Oportunidade de mercado identificada',1,'opportunity',75,'pontos mínimos no radar'),
+  ('ml_reauth','Reautorização do Mercado Livre',1,'critical',NULL,NULL);
+INSERT INTO routines (key, name, description, frequency, weekday, hour) VALUES
+  ('daily','Rotina diária','Resumo de vendas, faturamento, conversão, pedidos, estoque, problemas operacionais e ações recomendadas.','daily',NULL,7),
+  ('monday','Segunda — Mercado','Pesquisa de mercado, produtos vencedores e concorrência.','weekly',1,8),
+  ('tuesday','Terça — Anúncios','Otimização de anúncios, conversão e fotografias.','weekly',2,8),
+  ('wednesday','Quarta — Preços','Preços, margens e kits.','weekly',3,8),
+  ('thursday','Quinta — Produção','Produção, filamento e capacidade produtiva.','weekly',4,8),
+  ('friday','Sexta — Relatório executivo','Resultados da semana e planejamento da semana seguinte.','weekly',5,17),
+  ('month_end','Fechamento do mês','DRE gerencial, faturamento, lucro, despesas, margens, crescimento, metas e plano do próximo mês.','monthly_end',NULL,18);
+`,
+  /* 004 — métricas diárias de desempenho (relatório "Métricas do desempenho dos seus produtos" do ML) */ `
+CREATE TABLE daily_metrics (
+  channel TEXT NOT NULL DEFAULT 'mercadolivre',
+  date TEXT NOT NULL,
+  unique_visits INTEGER, total_visits INTEGER, likes INTEGER,
+  intent_unique_visitors INTEGER, intent_units INTEGER, intent_count INTEGER, intent_value REAL,
+  sales_count INTEGER, unique_buyers INTEGER, units INTEGER, gross_sales REAL,
+  source TEXT NOT NULL DEFAULT 'import', import_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (channel, date)
+);
+`,
 ];

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { FileSpreadsheet, FileText, Eye } from "lucide-react";
 import { useApi } from "../lib/api.ts";
-import { Card, PageHeader, PeriodFilter, periodQuery, Button, Modal, Spinner, ErrorBox, Table, type PeriodValue } from "../components/ui.tsx";
+import { Card, PageHeader, PeriodFilter, periodQuery, Button, Modal, Spinner, ErrorBox, Table, ExportButtons, type PeriodValue } from "../components/ui.tsx";
 import { brl, pct } from "../lib/format.ts";
 
 const DESC: Record<string, string> = {
@@ -54,6 +54,19 @@ export default function Reports() {
               <a href={`/api/reports/${k}?${q}&format=pdf`}><Button size="sm" icon={<FileText className="size-3.5" />}>PDF</Button></a>
             </div>
           </Card>
+        ))}
+      </div>
+      <h2 className="mb-3 mt-8 text-sm font-semibold">Relatórios da Mind2Matter Intelligence</h2>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {[
+          ["Central de anúncios", "Preço, estoque, visitas, vendas, conversão, qualidade, classe, margem e lucro por unidade.", "/listings-center/export?days=30"],
+          ["Ranking — 20 anúncios prioritários", "Prioridades de otimização com motivos.", "/listings-center/export?days=30&list=priority"],
+          ["Ordens de produção", "Fila, tempos, filamento, prazos e status.", "/factory/export?kind=orders"],
+          ["Estoque de filamentos", "Disponível, mínimo, custo/kg e consumo.", "/factory/export?kind=filaments"],
+          ["DRE gerencial do mês", "Receita, tarifas, custos, margem de contribuição e resultado.", `/finance/dre?month=${new Date().toISOString().slice(0, 7)}`],
+          ["Metas e crescimento", "Simulação de pedidos, unidades, horas e filamento por ticket.", "/goals/export"],
+        ].map(([t, dsc, path]) => (
+          <Card key={t} className="flex flex-col"><h3 className="text-sm font-semibold">{t}</h3><p className="mt-1 flex-1 text-xs text-ink-3">{dsc}</p><div className="mt-4"><ExportButtons path={path} label="" /></div></Card>
         ))}
       </div>
       {preview && <Preview k={preview} q={q} onClose={() => setPreview(null)} />}

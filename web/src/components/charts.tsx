@@ -95,3 +95,74 @@ export function SmallLine({ data, keys }: { data: any[]; keys: { key: string; na
     </ResponsiveContainer>
   );
 }
+
+/** Barras verticais genéricas (semanal, mensal com relatório importado, cenários). */
+export function Bars({ data, xKey, bars, xFmt, money = true, height = 240 }: { data: any[]; xKey: string; bars: { key: string; name: string; color: string; stack?: string }[]; xFmt?: (v: any) => string; money?: boolean; height?: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        {grid}
+        <XAxis dataKey={xKey} tickFormatter={xFmt} {...axis} minTickGap={8} />
+        <YAxis tickFormatter={(v) => (money ? brlShort(v) : int(v))} {...axis} width={70} />
+        <Tooltip cursor={{ fill: "var(--color-surface-2)" }} content={<Tip money={money} labelFmt={xFmt} />} />
+        {bars.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+        {bars.map((b) => <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} stackId={b.stack} radius={[4, 4, 0, 0]} maxBarSize={38} />)}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Evolução da meta: acumulado real x trajetória linear x projeção. */
+export function GoalChart({ data, goal }: { data: { date: string; actual: number | null; target: number; projected: number | null }[]; goal: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <defs>
+          <linearGradient id="goalA" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--color-brand)" stopOpacity={0.3} />
+            <stop offset="100%" stopColor="var(--color-brand)" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        {grid}
+        <XAxis dataKey="date" tickFormatter={dayShort} {...axis} minTickGap={24} />
+        <YAxis tickFormatter={(v) => brlShort(v)} {...axis} width={70} domain={[0, Math.max(goal, ...data.map((d) => d.projected ?? 0))]} />
+        <Tooltip content={<Tip labelFmt={dayShort} />} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Area type="monotone" dataKey="target" name="Trajetória da meta" stroke="var(--color-chart-2)" strokeDasharray="4 4" fill="none" strokeWidth={1.5} dot={false} />
+        <Area type="monotone" dataKey="projected" name="Projeção (estimativa)" stroke="var(--color-warn)" strokeDasharray="2 3" fill="none" strokeWidth={1.5} dot={false} connectNulls />
+        <Area type="monotone" dataKey="actual" name="Faturamento acumulado" stroke="var(--color-brand)" fill="url(#goalA)" strokeWidth={2} dot={false} connectNulls />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Investimento x retorno (publicidade). */
+export function AdsReturn({ data }: { data: { date: string; cost: number; revenue: number }[] }) {
+  return (
+    <ResponsiveContainer width="100%" height={230}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        {grid}
+        <XAxis dataKey="date" tickFormatter={dayShort} {...axis} minTickGap={20} />
+        <YAxis tickFormatter={(v) => brlShort(v)} {...axis} width={70} />
+        <Tooltip cursor={{ fill: "var(--color-surface-2)" }} content={<Tip labelFmt={dayShort} />} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Bar dataKey="cost" name="Investimento" fill="var(--color-warn)" radius={[3, 3, 0, 0]} maxBarSize={18} />
+        <Bar dataKey="revenue" name="Receita atribuída" fill="var(--color-brand)" radius={[3, 3, 0, 0]} maxBarSize={18} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Anel de progresso (meta mensal). */
+export function Ring({ pct, size = 132, label }: { pct: number | null; size?: number; label?: string }) {
+  const r = size / 2 - 9, c = 2 * Math.PI * r, v = Math.max(0, Math.min(100, pct ?? 0));
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={label ?? `${v.toFixed(0)}%`}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-surface-2)" strokeWidth={10} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-brand)" strokeWidth={10} strokeLinecap="round"
+        strokeDasharray={`${(v / 100) * c} ${c}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dasharray .6s ease" }} />
+      <text x="50%" y="48%" textAnchor="middle" fontSize={size / 5.2} fontWeight={600} fill="var(--color-ink)" style={{ fontVariantNumeric: "tabular-nums" }}>{pct === null ? "—" : `${pct.toFixed(1)}%`}</text>
+      <text x="50%" y="64%" textAnchor="middle" fontSize={10} fill="var(--color-ink-3)">da meta</text>
+    </svg>
+  );
+}

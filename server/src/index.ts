@@ -7,6 +7,7 @@ import "./db/index.ts";
 import { authRouter, usersRouter, sessionMiddleware, csrfGuard } from "./auth/index.ts";
 import { oauthRouter } from "./ml/oauth.ts";
 import { api } from "./routes/api.ts";
+import { v2 } from "./routes/v2.ts";
 import { errorHandler } from "./lib/errors.ts";
 import { logger } from "./lib/logger.ts";
 import { startScheduler } from "./services/scheduler.ts";
@@ -32,6 +33,7 @@ export function createApp() {
   app.use("/api/auth", authRouter);
   app.use("/api/users", usersRouter);
   app.use("/api/ml/oauth", oauthRouter);
+  app.use("/api", v2);
   app.use("/api", api);
   app.use("/api", (_req, res) => res.status(404).json({ error: "Rota não encontrada" }));
 
