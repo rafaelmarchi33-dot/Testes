@@ -1,5 +1,6 @@
 import { q, json, getSetting } from "../db/index.ts";
-import { resolvePeriod, previousRange, localDate } from "../lib/dates.ts";
+import { resolvePeriod, previousRange, localDate, addDays } from "../lib/dates.ts";
+import { goalProgress } from "./company.ts";
 import { profitByListing } from "./finance.ts";
 
 type Severity = "info" | "warning" | "critical" | "opportunity";
@@ -59,8 +60,11 @@ export function evaluateAlerts(now = new Date()) {
   const staleDays = getSetting<number>("stale_days", 21);
   const fmt = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+  const cfg = new Map(q.all<{ type: string; enabled: number; severity: string | null; threshold: number | null }>("SELECT type, enabled, severity, threshold FROM alert_rules").map((r) => [r.type, r]));
   const rule = (type: string, build: () => AlertInput[]) => {
-    const list = build();
+    const c = cfg.get(type);
+    if (c && !c.enabled) { resolveStale(type, new Set()); return; }
+    const list = build().map((a) => (c?.severity ? { ...a, severity: c.severity as Severity } : a));
     for (const a of list) raise(a);
     resolveStale(type, new Set(list.map((a) => a.key)));
   };
@@ -217,6 +221,104 @@ export function evaluateAlerts(now = new Date()) {
     const acc = q.get<any>("SELECT id, last_error FROM ml_accounts WHERE status='needs_reauth'");
     return acc ? [{ type: "ml_reauth", severity: "critical" as const, title: "Reconecte o Mercado Livre", message: "A autorização expirou ou foi revogada. A sincronização está parada.", key: "ml_reauth" }] : [];
   });
+
+  const th = (type: string, d: number) => cfg.get(type)?.threshold ?? d;
+
+  // 13. Margem negativa
+  rule("negative_margin", () =>
+    profit.filter((p) => (p.margin_pct ?? 0) < th("negative_margin", 0)).map((p) => ({
+      type: "negative_margin", severity: "critical" as const, title: "Produto com margem negativa",
+      message: `"${p.title}": margem de ${p.margin_pct?.toFixed(1)}% nos últimos 30 dias — cada venda dá prejuízo de ${fmt((p.profit ?? 0) / Math.max(1, p.units))}.`,
+      entity: "listing", entity_id: p.listing_id, key: `negative_margin:${p.listing_id}`, data: p,
+    })),
+  );
+
+  // 14. Produto campeão com estoque baixo (cobertura em dias pela velocidade de 30d)
+  rule("champion_low_stock", () => {
+    const minDays = th("champion_low_stock", 7);
+    return q.all<any>(
+      `SELECT p.id, p.name, p.stock_qty, SUM(oi.quantity) units FROM products p JOIN listings l ON l.product_id=p.id JOIN order_items oi ON oi.listing_id=l.id JOIN orders o ON o.id=oi.order_id
+       WHERE p.made_to_order=0 AND o.status='paid' AND o.date_created >= ? GROUP BY p.id HAVING units >= 5`,
+      [new Date(now.getTime() - 30 * 86_400_000).toISOString()],
+    ).filter((p) => p.stock_qty / (p.units / 30) < minDays).map((p) => ({
+      type: "champion_low_stock", severity: "critical" as const, title: "Produto campeão com estoque baixo",
+      message: `"${p.name}" vende ${(p.units / 30).toFixed(1)} un./dia e tem ${p.stock_qty} un. — cobertura de ${(p.stock_qty / (p.units / 30)).toFixed(1)} dias. Programe produção.`,
+      entity: "product", entity_id: String(p.id), key: `champion_low_stock:${p.id}`,
+    }));
+  });
+
+  // 15. Filamento abaixo do mínimo
+  rule("filament_low", () =>
+    q.all<any>("SELECT * FROM filaments WHERE active=1 AND min_g > 0 AND available_g <= min_g").map((f) => ({
+      type: "filament_low", severity: "warning" as const, title: "Filamento abaixo do mínimo",
+      message: `${f.material} ${f.color ?? ""} ${f.brand ?? ""}: ${Math.round(f.available_g)} g disponíveis (mínimo ${Math.round(f.min_g)} g). Avalie reposição — compras não são feitas automaticamente.`,
+      entity: "filament", entity_id: String(f.id), key: `filament_low:${f.id}`,
+    })),
+  );
+
+  // 16. Risco de atraso na produção
+  rule("production_delay", () => {
+    const today = localDate(now);
+    return q.all<any>("SELECT id, name, due_date, status FROM production_orders WHERE status NOT IN ('done','cancelled') AND due_date IS NOT NULL AND due_date <= ?", [addDays(today, 1)]).map((o) => ({
+      type: "production_delay", severity: "critical" as const, title: o.due_date < today ? "Ordem de produção atrasada" : "Ordem de produção vence em até 1 dia",
+      message: `OP #${o.id} "${o.name}" (${o.status}) — prazo ${o.due_date.split("-").reverse().join("/")}.`,
+      entity: "production_order", entity_id: String(o.id), key: `production_delay:${o.id}`,
+    }));
+  });
+
+  // 17. Campanha consumindo orçamento sem retorno (ACOS acima do limite em 14 dias)
+  rule("campaign_no_return", () => {
+    const maxAcos = th("campaign_no_return", 35);
+    const since = addDays(localDate(now), -13);
+    return q.all<any>("SELECT c.id, c.name, SUM(d.cost) cost, SUM(d.total_amount) amount FROM ads_campaigns c JOIN ads_campaign_daily d ON d.campaign_id=c.id WHERE d.date >= ? GROUP BY c.id HAVING cost > 0", [since])
+      .filter((c) => !c.amount || (c.cost / c.amount) * 100 > maxAcos).map((c) => ({
+        type: "campaign_no_return", severity: "warning" as const, title: "Campanha sem retorno adequado",
+        message: `"${c.name}": ${fmt(c.cost)} investidos em 14 dias com ${fmt(c.amount ?? 0)} em vendas atribuídas (ACOS ${c.amount ? ((c.cost / c.amount) * 100).toFixed(0) + "%" : "∞"}; limite ${maxAcos}%). Nenhuma alteração é feita sem sua aprovação.`,
+        entity: "campaign", entity_id: c.id, key: `campaign_no_return:${c.id}`,
+      }));
+  });
+
+  // 18. Queda de conversão (7d vs 7d anteriores, com visitas registradas)
+  rule("conversion_drop", () => {
+    const cur = resolvePeriod("7d", undefined, undefined, now);
+    const prev = previousRange(cur);
+    const conv = (r: typeof cur) => {
+      const v = q.get<{ v: number | null }>("SELECT SUM(visits) v FROM visits_daily WHERE scope='store' AND date BETWEEN ? AND ?", [r.from, r.to])!.v;
+      const o = q.get<{ n: number }>("SELECT COUNT(*) n FROM orders WHERE status='paid' AND date_created >= ? AND date_created < ?", [r.fromUtc, r.toUtc])!.n;
+      return v ? (o / v) * 100 : null;
+    };
+    const a = conv(cur), b = conv(prev);
+    const out: AlertInput[] = [];
+    if (a !== null && b !== null && b - a >= th("conversion_drop", 2)) {
+      out.push({ type: "conversion_drop", severity: "warning", title: "Queda de conversão", message: `Conversão de ${a.toFixed(1)}% nos últimos 7 dias contra ${b.toFixed(1)}% na semana anterior (−${(b - a).toFixed(1)} p.p.).`, key: `conversion_drop:${cur.to}` });
+    }
+    // Relatórios importados também sinalizam queda
+    for (const r of q.all<any>("SELECT * FROM period_reports WHERE var_conversion_pp IS NOT NULL AND var_conversion_pp <= ?", [-th("conversion_drop", 2)])) {
+      out.push({ type: "conversion_drop", severity: "warning", title: "Queda de conversão (relatório importado)",
+        message: `Período ${r.date_from.split("-").reverse().join("/")}–${r.date_to.split("-").reverse().join("/")}: conversão de ${r.conversion_pct}% (${r.var_conversion_pp} p.p.), enquanto as visitas variaram ${r.var_visits_pct ?? "—"}%. Mais tráfego com menor conversão: revise anúncios que recebem as novas visitas.`,
+        key: `conversion_drop:report:${r.id}`, entity: "period_report", entity_id: String(r.id) });
+    }
+    return out;
+  });
+
+  // 19. Abaixo da trajetória da meta
+  rule("below_goal", () => {
+    const g = goalProgress(now);
+    const min = th("below_goal", 90);
+    if (g.trajectory_pct === null || g.trajectory_pct >= min || g.today.slice(8, 10) < "03") return [];
+    return [{ type: "below_goal", severity: "warning" as const, title: "Faturamento abaixo da trajetória da meta",
+      message: `${fmt(g.revenue)} no mês (${g.trajectory_pct.toFixed(0)}% do esperado até hoje: ${fmt(g.expected_to_date)}). Para atingir ${fmt(g.goal)} são necessários ${g.needed_per_day !== null ? fmt(g.needed_per_day) : "—"}/dia.`,
+      key: `below_goal:${g.month}`, data: { revenue: g.revenue, expected: g.expected_to_date } }];
+  });
+
+  // 20. Oportunidade de mercado identificada no radar
+  rule("market_opportunity", () =>
+    q.all<any>("SELECT id, name, score FROM opportunities WHERE score >= ? AND status IN ('new','watching')", [th("market_opportunity", 75)]).map((o) => ({
+      type: "market_opportunity", severity: "opportunity" as const, title: "Oportunidade de mercado identificada",
+      message: `"${o.name}" recebeu nota ${Math.round(o.score)} no Radar de Produtos. Avalie enviar ao Laboratório.`,
+      entity: "opportunity", entity_id: String(o.id), key: `market_opportunity:${o.id}`,
+    })),
+  );
 }
 
 export function listAlerts(status?: string) {

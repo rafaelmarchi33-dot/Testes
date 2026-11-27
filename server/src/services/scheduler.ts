@@ -9,6 +9,7 @@ import { q } from "../db/index.ts";
 import { aiConfigured } from "../config.ts";
 import { generateDailyReport } from "../ai/manager.ts";
 import { localDate } from "../lib/dates.ts";
+import { tickRoutines } from "./routines.ts";
 
 /** Rotinas automáticas: sincronização incremental, alertas, relatório diário de IA, backup e limpeza de logs. */
 export function startScheduler() {
@@ -41,6 +42,9 @@ export function startScheduler() {
     if (last && localDate(last.created_at) === today) return;
     try { await generateDailyReport(null); } catch (e) { logger.error("daily_report_failed", { error: e }); }
   }, 15 * 60_000);
+
+  // Rotinas da diretoria (diária, semanais e fechamento do mês) — agendamento interno real.
+  setInterval(() => { tickRoutines().catch((e) => logger.error("routines_tick_failed", { error: e })); }, 5 * 60_000);
 
   setInterval(() => {
     try { runBackup(); } catch (e) { logger.error("backup_failed", { error: e }); }

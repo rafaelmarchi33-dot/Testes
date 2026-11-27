@@ -45,6 +45,8 @@ export function resolvePeriod(period: string, customFrom?: string, customTo?: st
       return build(addDays(today, -6), today);
     case "90d":
       return build(addDays(today, -89), today);
+    case "month":
+      return build(today.slice(0, 8) + "01", today);
     case "custom": {
       if (!customFrom || !customTo || !DAY_RE.test(customFrom) || !DAY_RE.test(customTo)) {
         throw new Error("Período personalizado requer 'from' e 'to' no formato AAAA-MM-DD");
@@ -57,6 +59,18 @@ export function resolvePeriod(period: string, customFrom?: string, customTo?: st
     default:
       return build(addDays(today, -29), today);
   }
+}
+
+/** Período de comparação: para "month", o mesmo intervalo de dias do mês anterior; nos demais, o período imediatamente anterior. */
+export function comparisonRange(period: string, r: Range): Range {
+  if (period === "month") {
+    const [y, m] = [Number(r.from.slice(0, 4)), Number(r.from.slice(5, 7))];
+    const prevStart = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 10);
+    const prevEnd = new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+    const end = addDays(prevStart, r.days - 1);
+    return build(prevStart, end < prevEnd ? end : prevEnd);
+  }
+  return previousRange(r);
 }
 
 /** Período imediatamente anterior, de mesma duração. */
