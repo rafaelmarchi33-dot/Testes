@@ -531,5 +531,8 @@ CREATE TABLE daily_metrics (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   PRIMARY KEY (channel, date)
 );
+`,  /* 005 — envios criados pela importação do relatório de vendas (para desfazer) */ `
+ALTER TABLE shipments ADD COLUMN import_id INTEGER;
+CREATE INDEX idx_shipments_import ON shipments(import_id);
 `,
 ];

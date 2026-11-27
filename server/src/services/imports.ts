@@ -18,7 +18,7 @@ export const IMPORT_KINDS: Record<string, ImportKindDef> = {
     fields: [
       { key: "order_id", label: "Nº da venda/pedido", type: "text", required: true, synonyms: ["n de venda", "no de venda", "numero de venda", "n da venda", "id do pedido", "order id", "pedido", "venda", "order"] },
       { key: "date", label: "Data da venda", type: "date", required: true, synonyms: ["data da venda", "data do pedido", "data de criacao do pedido", "data", "date", "created"] },
-      { key: "status", label: "Estado/status", type: "text", synonyms: ["estado", "status do pedido", "status", "descricao do status"] },
+      { key: "status", label: "Estado/status", type: "text", synonyms: ["estado", "status do pedido", "status"] },
       { key: "listing_id", label: "Nº do anúncio", type: "text", synonyms: ["de anuncio", "n do anuncio", "id do anuncio", "anuncio id", "item id", "mlb"] },
       { key: "sku", label: "SKU", type: "text", synonyms: ["sku", "sku de referencia", "codigo", "sku principal"] },
       { key: "title", label: "Título do produto", type: "text", synonyms: ["titulo do anuncio", "nome do produto", "titulo", "produto", "title"] },
@@ -27,6 +27,12 @@ export const IMPORT_KINDS: Record<string, ImportKindDef> = {
       { key: "total", label: "Receita do item/total", type: "money", synonyms: ["receita por produtos", "subtotal do produto", "valor total", "total do pedido", "receita", "total"] },
       { key: "sale_fee", label: "Tarifa de venda (total da linha)", type: "money", synonyms: ["tarifa de venda e impostos", "tarifa de venda", "taxa de comissao", "comissao", "taxa de servico"] },
       { key: "channel", label: "Canal", type: "text", synonyms: ["canal de venda", "canal", "marketplace"] },
+      { key: "shipment_id", label: "Nº do envio", type: "text", synonyms: ["identificador do envio", "id do envio", "shipment id"] },
+      { key: "shipping_revenue", label: "Receita por envio (pago pelo comprador)", type: "money", synonyms: ["receita por envio"] },
+      { key: "shipping_fee", label: "Tarifas de envio", type: "money", synonyms: ["tarifas de envio", "tarifa de envio", "custo de envio do vendedor"] },
+      { key: "discounts", label: "Descontos e bônus", type: "money", synonyms: ["descontos e bonus"] },
+      { key: "refunds", label: "Cancelamentos e reembolsos", type: "money", synonyms: ["cancelamentos e reembolsos"] },
+      { key: "net_total", label: "Total líquido (repasse)", type: "money", synonyms: ["total brl", "total liquido", "valor liquido"] },
     ],
   },
   listings: {
@@ -434,6 +440,17 @@ const channelOf = (v: string | null | undefined) => {
   const n = normalize(v ?? "");
   return n.includes("shopee") ? "shopee" : n && !n.includes("mercado") && !n.includes("ml") ? n.replace(/\s+/g, "_").slice(0, 30) : "mercadolivre";
 };
+/** Situação do envio a partir do "Estado" do relatório de vendas do ML (só o necessário para os painéis). */
+const shipStatusOf = (v: string | null | undefined): string | null => {
+  const n = normalize(v ?? "");
+  if (!n) return null;
+  if (/cancel|devol|reembols/.test(n)) return "cancelled";
+  if (/entregue|chegou/.test(n)) return "delivered";
+  if (/a caminho|enviad/.test(n)) return "shipped";
+  if (/etiqueta|pronta para/.test(n)) return "ready_to_ship";
+  if (/para enviar|preparando|em preparacao/.test(n)) return "handling";
+  return null;
+};
 const statusOf = (v: string | null | undefined) => {
   const n = normalize(v ?? "");
   if (!n) return "paid";
@@ -460,15 +477,35 @@ export function commitImport(importId: number, kind: string, parsed: ParsedRow[]
           const v = r.values;
           const unit = v.unit_price ?? (v.total !== null ? v.total / v.quantity : 0);
           const listing = v.listing_id ?? (v.sku ? `SKU:${v.sku}` : `IMP:${normalize(v.title ?? "item").slice(0, 60)}`);
-          return { listing, title: v.title ?? v.sku ?? listing, quantity: v.quantity, unit, fee: v.sale_fee !== null ? Math.abs(v.sale_fee) / v.quantity : null, sku: v.sku };
+          // "Descontos e bônus" do ML são reduções da tarifa de venda: a tarifa efetiva é a bruta menos o desconto
+          const grossFee = v.sale_fee !== null ? Math.abs(v.sale_fee) : null;
+          const fee = grossFee !== null ? Math.max(0, grossFee - Math.max(0, v.discounts ?? 0)) / v.quantity : null;
+          return { listing, title: v.title ?? v.sku ?? listing, quantity: v.quantity, unit, fee, sku: v.sku };
         });
         const total = items.reduce((s, i) => s + i.unit * i.quantity, 0);
+        const sum = (k: string) => rows.reduce((s, r) => s + (r.values[k] ?? 0), 0);
+        const has = (k: string) => rows.some((r) => r.values[k] !== null && r.values[k] !== undefined);
+        // custo de frete do vendedor = tarifas de envio − o que o comprador pagou de frete
+        const shippingCost = has("shipping_fee") ? Math.round((Math.abs(sum("shipping_fee")) - sum("shipping_revenue")) * 100) / 100 : null;
+        const shipId = v0.shipment_id && /^\d{1,15}$/.test(String(v0.shipment_id).trim()) ? Number(String(v0.shipment_id).trim()) : null;
+        const extras = {
+          imported_order_id: oid, status_text: v0.status ?? null,
+          shipping_fee: has("shipping_fee") ? sum("shipping_fee") : null, shipping_revenue: has("shipping_revenue") ? sum("shipping_revenue") : null,
+          discounts: has("discounts") ? sum("discounts") : null, refunds: has("refunds") ? sum("refunds") : null, net_total: has("net_total") ? sum("net_total") : null,
+        };
         q.run(
-          `INSERT INTO orders (id, account_id, status, payment_status, date_created, last_updated, total_amount, paid_amount, currency_id, channel, source, import_id, raw, synced_at)
-           VALUES (?,?,?,?,?,?,?,?, 'BRL', ?, 'import', ?, ?, ?)`,
-          [id, 0, statusOf(v0.status), statusOf(v0.status) === "paid" ? "approved" : "pending", v0.date.iso, v0.date.iso, total, statusOf(v0.status) === "paid" ? total : 0,
-            channelOf(v0.channel), importId, JSON.stringify({ imported_order_id: oid }), new Date().toISOString()],
+          `INSERT INTO orders (id, account_id, status, status_detail, payment_status, date_created, last_updated, total_amount, paid_amount, currency_id, shipping_id, channel, source, import_id, raw, synced_at)
+           VALUES (?,?,?,?,?,?,?,?,?, 'BRL', ?, ?, 'import', ?, ?, ?)`,
+          [id, 0, statusOf(v0.status), v0.status ?? null, statusOf(v0.status) === "paid" ? "approved" : "pending", v0.date.iso, v0.date.iso, total, statusOf(v0.status) === "paid" ? total : 0,
+            shipId, channelOf(v0.channel), importId, JSON.stringify(extras), new Date().toISOString()],
         );
+        if (shipId !== null) {
+          q.run(
+            `INSERT INTO shipments (id, order_id, status, date_created, seller_cost, raw, synced_at, import_id) VALUES (?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET seller_cost=COALESCE(shipments.seller_cost, excluded.seller_cost)`,
+            [shipId, id, shipStatusOf(v0.status), v0.date.iso, shippingCost, JSON.stringify({ source: "import" }), new Date().toISOString(), importId],
+          );
+        }
         for (const it of items) {
           q.run(
             `INSERT INTO order_items (order_id, listing_id, variation_id, title, quantity, unit_price, sale_fee, seller_sku) VALUES (?,?,'',?,?,?,?,?)
@@ -576,6 +613,7 @@ export function undoImport(importId: number) {
   q.tx(() => {
     const del = (table: string, sql: string) => { removed[table] = Number(q.run(sql, [importId]).changes); };
     del("order_items", "DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE import_id=?)");
+    del("shipments", "DELETE FROM shipments WHERE import_id=?");
     del("orders", "DELETE FROM orders WHERE import_id=?");
     del("listings", "DELETE FROM listings WHERE import_id=?");
     del("period_reports", "DELETE FROM period_reports WHERE import_id=?");

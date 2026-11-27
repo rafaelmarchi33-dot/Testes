@@ -123,6 +123,44 @@ test("importação: formatos brasileiros, auto-mapeamento, validação, efetiva�
   assert.throws(() => undoImport(imp), /efetivadas/);
 });
 
+test("importação: layout real do ML (Estado vs. Descrição do status, envio, descontos e total líquido)", () => {
+  const H = ["N.º de venda", "Data de venda", "Estado", "Descrição do status", "Pacote de diversos produtos", "Unidades", "Receita por produtos (BRL)",
+    "Tarifa de venda e impostos (BRL)", "Receita por envio (BRL)", "Tarifas de envio (BRL)", "Descontos e bônus", "Cancelamentos e reembolsos (BRL)", "Total (BRL)",
+    "SKU", "# de anúncio", "Título do anúncio", "Preço unitário de venda do anúncio (BRL)", "Estado", "Identificador do envio", "Unidades"];
+  const csv = [
+    "Vendas  Status das suas vendas;;;",
+    H.join(";"),
+    "3000001;26 de novembro de 2026 21:44 hs.;Etiqueta pronta para impressão;Você deve despachar o pacote hoje;Sim;1;45;-8,1;;-13,85;1,21;;24,26;IMA01;MLB9;Ímã;45;Rio de Janeiro;48644513619;1",
+    "3000002;20 de novembro de 2026 10:00 hs.;Cancelada pelo comprador;;Não;1;50;-9;5,99;-19,84;;-27,15;0;IMA01;MLB9;Ímã;50;São Paulo;48559352710;1",
+  ].join("\n");
+  const p = buildPreview("orders", parseCsv(csv));
+  const m = p.mapping as Record<string, number | null>;
+  const col = (k: string) => p.headers[m[k]!];
+  assert.equal(m.status, 2, "status vem da coluna Estado (status da venda), não da descrição nem da UF");
+  assert.equal(col("total"), "Receita por produtos (BRL)");
+  assert.equal(col("net_total"), "Total (BRL)");
+  assert.equal(col("shipping_fee"), "Tarifas de envio (BRL)");
+  assert.equal(col("shipping_revenue"), "Receita por envio (BRL)");
+  assert.equal(col("shipment_id"), "Identificador do envio");
+  assert.equal(m.quantity, 5);
+  const imp = Number(q.run("INSERT INTO imports (kind, filename, original_name) VALUES ('orders','ml.xlsx','ml.xlsx')").lastInsertRowid);
+  assert.equal(commitImport(imp, "orders", p.parsed, 1).imported, 2);
+  const o1 = q.get<any>("SELECT * FROM orders WHERE id=3000001")!;
+  assert.equal(o1.status, "paid");
+  assert.equal(o1.channel, "mercadolivre");
+  assert.equal(o1.shipping_id, 48644513619);
+  assert.equal(JSON.parse(o1.raw).net_total, 24.26);
+  assert.equal(Math.round(q.get<any>("SELECT sale_fee FROM order_items WHERE order_id=3000001")!.sale_fee * 100) / 100, 6.89, "tarifa líquida do desconto");
+  const s1 = q.get<any>("SELECT * FROM shipments WHERE id=48644513619")!;
+  assert.equal(s1.seller_cost, 13.85);
+  assert.equal(s1.status, "ready_to_ship");
+  assert.equal(q.get<any>("SELECT status FROM orders WHERE id=3000002")!.status, "cancelled");
+  assert.equal(q.get<any>("SELECT seller_cost FROM shipments WHERE id=48559352710")!.seller_cost, 13.85, "frete = tarifa − receita de envio");
+  const u = undoImport(imp);
+  assert.equal(u.removed.shipments, 2);
+  assert.equal(q.get<any>("SELECT COUNT(*) n FROM shipments")!.n, 0);
+});
+
 test("importação de PDF de métricas: extração do texto", () => {
   const values = parseMetricsText("Métricas 19 de nov. - 26 de nov. de 2026\nVendas brutas R$ 1.872\n+79,1%\nUnidades vendidas 39\nQuantidade de vendas 37\nVisitas 534\nConversão 6,9 %\nPreço médio por unidade R$ 48");
   assert.equal(values.gross_sales, 1872);
