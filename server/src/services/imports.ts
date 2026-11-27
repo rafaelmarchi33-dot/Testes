@@ -462,6 +462,34 @@ const statusOf = (v: string | null | undefined) => {
 /* ======================================================================
  * Efetivação e desfazer
  * ==================================================================== */
+/**
+ * Garante que o anúncio de uma venda importada exista na central de anúncios, vinculado a um produto pelo SKU.
+ * - ID real do marketplace (ex.: MLB123…): cria o anúncio com título, SKU e o preço da venda mais recente.
+ * - "SKU:…": cria só se o produto já existir (comportamento anterior).
+ * Produtos criados aqui são sob demanda (impressão 3D) e ficam registrados para o desfazer.
+ */
+function ensureImportedListing(it: { listing: string; title: string; unit: number; sku?: string | null }, dateIso: string, channel: string, importId: number, updates: any[]) {
+  const existing = q.get<{ source: string; last_updated: string | null }>("SELECT source, last_updated FROM listings WHERE id=?", [it.listing]);
+  if (existing) {
+    // anúncio criado por importação: mantém o preço da venda mais recente
+    if (existing.source === "import" && (!existing.last_updated || dateIso > existing.last_updated)) {
+      q.run("UPDATE listings SET price=?, last_updated=? WHERE id=?", [it.unit, dateIso, it.listing]);
+    }
+    return;
+  }
+  const realId = /^(MLB|MLA|MLM|MCO|MLC|MLU|MPE)\d{6,}$/i.test(it.listing);
+  let productId = it.sku ? q.get<{ id: number }>("SELECT id FROM products WHERE sku=?", [it.sku])?.id ?? null : null;
+  if (!realId && !(it.listing.startsWith("SKU:") && productId)) return;
+  if (!productId && it.sku) {
+    productId = Number(q.run("INSERT INTO products (sku, name, made_to_order, stock_qty, notes) VALUES (?,?,1,0,?)",
+      [it.sku, it.title, "Criado a partir das vendas importadas. Complete peso, tempo de impressão e custos."]).lastInsertRowid);
+    updates.push({ table: "products", id: productId, created: true });
+  }
+  q.run(`INSERT INTO listings (id, account_id, product_id, title, price, currency_id, status, sku, channel, source, import_id, last_updated, synced_at)
+         VALUES (?,0,?,?,?,'BRL','active',?,?,'import',?,?,?)`,
+    [it.listing, productId, it.title, it.unit, it.sku ?? null, channel, importId, dateIso, new Date().toISOString()]);
+}
+
 export function commitImport(importId: number, kind: string, parsed: ParsedRow[], userId: number) {
   const ok = parsed.filter((r) => !r.errors.length);
   const updates: any[] = [];
@@ -512,14 +540,7 @@ export function commitImport(importId: number, kind: string, parsed: ParsedRow[]
              ON CONFLICT(order_id, listing_id, variation_id) DO UPDATE SET quantity = quantity + excluded.quantity`,
             [id, it.listing, it.title, it.quantity, it.unit, it.fee, it.sku ?? null],
           );
-          // vincula ao produto pelo SKU, quando existir
-          if (it.sku) {
-            const p = q.get<{ id: number }>("SELECT id FROM products WHERE sku=?", [it.sku]);
-            if (p && !q.get("SELECT 1 FROM listings WHERE id=?", [it.listing]) && it.listing.startsWith("SKU:")) {
-              q.run("INSERT INTO listings (id, account_id, product_id, title, price, status, sku, channel, source, import_id) VALUES (?,0,?,?,?,'active',?,?,'import',?)",
-                [it.listing, p.id, it.title, it.unit, it.sku, channelOf(v0.channel), importId]);
-            }
-          }
+          ensureImportedListing(it, v0.date.iso, channelOf(v0.channel), importId, updates);
         }
         imported += rows.length;
       }

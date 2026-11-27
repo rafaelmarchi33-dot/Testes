@@ -164,13 +164,13 @@ export default function Seller() {
 /** Unifica um anúncio importado com o anúncio real sincronizado (evita produto duplicado). */
 function MergeBox({ id, onDone }: { id: string; onDone: () => void }) {
   const list = useApi<any>("/listings-center?period=90d");
-  const api_ = (list.data?.rows ?? []).filter((r: any) => r.source === "api");
+  const api_ = (list.data?.rows ?? []).filter((r: any) => r.source !== "initial_import" && r.id !== id);
   const [into, setInto] = useState("");
   const [open, setOpen] = useState(false);
   if (!api_.length) return null;
   return (
     <div className="flex flex-wrap items-end gap-2 rounded-lg border border-info/30 bg-info-soft p-3 text-xs">
-      <Field label="Este anúncio já existe no Mercado Livre? Unifique com o sincronizado" className="min-w-0 flex-1">
+      <Field label="Este anúncio já existe no Mercado Livre? Unifique com o anúncio real" className="min-w-0 flex-1">
         <Select value={into} onChange={(e) => setInto(e.target.value)}><option value="">Selecione o anúncio real…</option>{api_.map((r: any) => <option key={r.id} value={r.id}>{r.id} · {r.title}</option>)}</Select>
       </Field>
       <Button size="sm" disabled={!into} onClick={() => setOpen(true)}>Unificar</Button>

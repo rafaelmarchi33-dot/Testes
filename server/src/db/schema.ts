@@ -534,5 +534,26 @@ CREATE TABLE daily_metrics (
 `,  /* 005 — envios criados pela importação do relatório de vendas (para desfazer) */ `
 ALTER TABLE shipments ADD COLUMN import_id INTEGER;
 CREATE INDEX idx_shipments_import ON shipments(import_id);
+`,  /* 006 — vendas importadas antes da 006: cria os anúncios reais (MLB…) e os produtos por SKU que ficaram faltando */ `
+INSERT INTO products (sku, name, made_to_order, stock_qty, notes)
+SELECT oi.seller_sku, MAX(oi.title), 1, 0, 'Criado a partir das vendas importadas. Complete peso, tempo de impressão e custos.'
+FROM order_items oi JOIN orders o ON o.id = oi.order_id
+WHERE o.source = 'import' AND oi.seller_sku IS NOT NULL AND oi.seller_sku <> ''
+  AND oi.listing_id GLOB 'ML[A-Z][0-9][0-9][0-9][0-9][0-9][0-9]*'
+  AND NOT EXISTS (SELECT 1 FROM listings l WHERE l.id = oi.listing_id)
+  AND NOT EXISTS (SELECT 1 FROM products p WHERE p.sku = oi.seller_sku)
+GROUP BY oi.seller_sku;
+
+WITH latest AS (
+  SELECT oi.listing_id, oi.title, oi.unit_price, oi.seller_sku, o.channel, o.import_id, o.date_created,
+         ROW_NUMBER() OVER (PARTITION BY oi.listing_id ORDER BY o.date_created DESC) rn
+  FROM order_items oi JOIN orders o ON o.id = oi.order_id
+  WHERE o.source = 'import' AND oi.listing_id GLOB 'ML[A-Z][0-9][0-9][0-9][0-9][0-9][0-9]*'
+    AND NOT EXISTS (SELECT 1 FROM listings l WHERE l.id = oi.listing_id)
+)
+INSERT INTO listings (id, account_id, product_id, title, price, currency_id, status, sku, channel, source, import_id, last_updated, synced_at)
+SELECT listing_id, 0, (SELECT id FROM products p WHERE p.sku = latest.seller_sku AND latest.seller_sku <> ''), title, unit_price, 'BRL', 'active',
+       NULLIF(seller_sku, ''), channel, 'import', import_id, date_created, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+FROM latest WHERE rn = 1;
 `,
 ];
