@@ -77,8 +77,11 @@ Detalhes: [docs/ARQUITETURA.md](docs/ARQUITETURA.md) · progresso e próximos pa
 ## Testes
 
 ```bash
-npm test          # 22 testes do backend (node:test)
+npm test          # 24 testes do backend (node:test)
 npm run typecheck # tipos do backend e do frontend
+npm run audit     # auditoria completa: API (181 verificações) + interface no computador e no celular (69 passos)
 ```
+
+A auditoria sobe a aplicação com banco novo e um servidor simulado do Mercado Livre e da Anthropic, exercitando o OAuth real (PKCE), a sincronização, a IA, os cálculos, os filtros, as importações e as permissões. Resultado e correções: [docs/AUDITORIA.md](docs/AUDITORIA.md).
 
 Cobrem dados iniciais, calculadora 3D e preços, nota do radar e fluxo radar → laboratório → produto, importação (formatos brasileiros, cabeçalho deslocado, duplicidade, datas futuras, efetivação e desfazer), extração de PDF, meta sem dupla contagem, visão geral a partir de relatório, produção (transições, baixa idempotente de filamento, horas, estoque), alertas novos, central de anúncios sem margem inventada, rotinas e DRE — além dos testes anteriores de criptografia, OAuth, sincronização e aprovações.

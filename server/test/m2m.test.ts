@@ -234,3 +234,36 @@ test("relatório 'Métricas do desempenho' do ML: diário, sem dupla contagem co
   assert.equal(goalProgress(new Date("2026-11-27T15:00:00Z")).revenue, 1872);
   assert.equal(q.get<any>("SELECT COUNT(*) n FROM visits_daily WHERE scope='store'")!.n, 0);
 });
+
+test("auditoria: pedidos + métricas no mesmo período, período da central e alerta de conversão", async () => {
+  const { listingsCenter } = await import("../src/services/listingsIntel.ts");
+  const { resolvePeriod } = await import("../src/lib/dates.ts");
+  q.run("DELETE FROM daily_metrics"); q.run("DELETE FROM visits_daily"); q.run("DELETE FROM orders");
+  q.run("INSERT INTO daily_metrics (channel, date, unique_visits, sales_count, units, gross_sales) VALUES ('mercadolivre','2026-11-20',50,3,3,150),('mercadolivre','2026-11-21',40,2,2,100)");
+  q.run("INSERT INTO visits_daily (scope, date, visits) VALUES ('store','2026-11-20',50),('store','2026-11-21',40)");
+  // pedido individual no dia 21: esse dia passa a usar o pedido, não a métrica
+  q.run("INSERT INTO orders (id, account_id, status, date_created, total_amount, channel) VALUES (77, 0, 'paid', '2026-11-21T15:00:00.000Z', 60, 'mercadolivre')");
+  q.run("INSERT INTO order_items (order_id, listing_id, title, quantity, unit_price) VALUES (77, 'INICIAL-HOLLYLAND-M2', 'Ímã', 1, 60)");
+  const ov = overview("custom", "2026-11-20", "2026-11-21");
+  assert.equal(ov.data_source, "mixed");
+  assert.equal(ov.kpis.revenue, 210, "60 (pedido do dia 21) + 150 (métrica do dia 20), sem somar a métrica do dia 21");
+  assert.equal(ov.kpis.orders, 4);
+  assert.equal(ov.charts.daily!.find((d: any) => d.date === "2026-11-21")!.revenue, 60);
+  // central de anúncios respeita o intervalo informado
+  const inRange = listingsCenter({ range: resolvePeriod("custom", "2026-11-21", "2026-11-21") }).rows.find((r) => r.id === "INICIAL-HOLLYLAND-M2")!;
+  const outRange = listingsCenter({ range: resolvePeriod("custom", "2026-11-22", "2026-11-23") }).rows.find((r) => r.id === "INICIAL-HOLLYLAND-M2")!;
+  assert.equal(inRange.units_period, 1);
+  assert.equal(outRange.units_period, 0);
+  // conversão: só métricas importadas (sem pedidos) não pode disparar alerta de queda falso
+  q.run("DELETE FROM orders"); q.run("DELETE FROM alerts WHERE type='conversion_drop'");
+  q.run("DELETE FROM period_reports");
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(Date.UTC(2026, 10, 27 - i)).toISOString().slice(0, 10);
+    q.run("INSERT OR REPLACE INTO visits_daily (scope, date, visits) VALUES ('store',?,100)", [d]);
+    if (i < 7) q.run("INSERT OR REPLACE INTO daily_metrics (channel, date, unique_visits, sales_count, units, gross_sales) VALUES ('mercadolivre',?,100,7,7,300)", [d]);
+    else for (let k = 0; k < 7; k++) q.run("INSERT INTO orders (id, account_id, status, date_created, total_amount, channel) VALUES (?, 0, 'paid', ?, 40, 'mercadolivre')", [9000 + i * 10 + k, `${d}T15:00:00.000Z`]);
+  }
+  // semana anterior: 7 pedidos reais/dia; semana atual: 7 vendas/dia só nas métricas importadas → mesma conversão
+  evaluateAlerts(new Date("2026-11-27T20:00:00Z"));
+  assert.ok(!q.get("SELECT 1 FROM alerts WHERE type='conversion_drop' AND status!='resolved'"), "conversão estável (7%) não gera alerta");
+});

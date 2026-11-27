@@ -285,7 +285,11 @@ export function evaluateAlerts(now = new Date()) {
     const conv = (r: typeof cur) => {
       const v = q.get<{ v: number | null }>("SELECT SUM(visits) v FROM visits_daily WHERE scope='store' AND date BETWEEN ? AND ?", [r.from, r.to])!.v;
       const o = q.get<{ n: number }>("SELECT COUNT(*) n FROM orders WHERE status='paid' AND date_created >= ? AND date_created < ?", [r.fromUtc, r.toUtc])!.n;
-      return v ? (o / v) * 100 : null;
+      // dias sem pedidos individuais usam as vendas das métricas diárias importadas
+      const m = q.get<{ n: number | null }>(
+        `SELECT SUM(sales_count) n FROM daily_metrics d WHERE date BETWEEN ? AND ?
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.status='paid' AND date(datetime(o.date_created, '-180 minutes')) = d.date)`, [r.from, r.to])!.n ?? 0;
+      return v ? ((o + m) / v) * 100 : null;
     };
     const a = conv(cur), b = conv(prev);
     const out: AlertInput[] = [];

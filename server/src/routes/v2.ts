@@ -158,15 +158,22 @@ v2.get("/ml/status", viewer, (_req, res) => {
 // ======================================================================
 // Central de anúncios
 // ======================================================================
+/** Intervalo do filtro global (period/from/to) ou "days" legado. */
+function centerRange(qs: Record<string, string>) {
+  if (qs.period) {
+    try { return resolvePeriod(qs.period, qs.from, qs.to); } catch (e) { throw new HttpError(400, (e as Error).message); }
+  }
+  return undefined;
+}
 v2.get("/listings-center", viewer, (req, res) => {
   const { days, channel, search, status } = req.query as Record<string, string>;
-  res.json(listingsCenter({ days: days ? Math.min(365, Number(days)) : 30, channel, search, status }));
+  res.json(listingsCenter({ range: centerRange(req.query as Record<string, string>), days: days ? Math.min(365, Number(days)) : 30, channel, search, status }));
 });
 v2.get("/listings-center/export", viewer, ah(async (req, res) => {
-  const c = listingsCenter({ days: Number(req.query.days ?? 30) || 30, channel: req.query.channel as string });
+  const c = listingsCenter({ range: centerRange(req.query as Record<string, string>), days: Number(req.query.days ?? 30) || 30, channel: req.query.channel as string });
   const which = req.query.list === "priority" ? c.priority : c.rows;
   await sendReport(res, {
-    title: req.query.list === "priority" ? "Ranking — 20 anúncios prioritários" : "Central de anúncios", subtitle: subtitle(`Últimos ${c.days} dias`),
+    title: req.query.list === "priority" ? "Ranking — 20 anúncios prioritários" : "Central de anúncios", subtitle: subtitle(`Período ${c.from.split("-").reverse().join("/")} a ${c.to.split("-").reverse().join("/")}`),
     columns: [{ key: "id", header: "Anúncio", width: 18 }, { key: "title", header: "Título", width: 45 }, { key: "sku", header: "SKU", width: 12 }, { key: "price", header: "Preço", fmt: "money" },
       { key: "available_quantity", header: "Estoque ML", fmt: "int" }, { key: "visits", header: "Visitas", fmt: "int" }, { key: "units_period", header: "Vendas", fmt: "int" },
       { key: "conversion_pct", header: "Conversão", fmt: "pct" }, { key: "quality_score", header: "Qualidade", fmt: "num" }, { key: "class_label", header: "Classe", width: 16 },
@@ -187,6 +194,39 @@ v2.put("/listings/:id/fees", operator, ah((req, res) => {
     [String(req.params.id), b.fee_pct, b.fixed_fee, b.shipping_cost, b.ads_pct, b.notes ?? null, now()]);
   audit(req.user!.id, "listing.fees_override", "listing", req.params.id as string, b, req.ip);
   res.json({ ok: true });
+}));
+/**
+ * Unifica um anúncio importado (ex.: importação inicial, sem ID oficial) com o anúncio real sincronizado da API.
+ * Leva ficha técnica, tarifas e concorrentes vinculados para o anúncio real e remove o registro provisório.
+ */
+v2.post("/listings/:id/merge", admin, ah((req, res) => {
+  const { into } = z.object({ into: z.string().min(3), confirm: z.literal(true) }).parse(req.body);
+  const from = String(req.params.id);
+  const src = q.get<any>("SELECT * FROM listings WHERE id=?", [from]);
+  const dst = q.get<any>("SELECT * FROM listings WHERE id=?", [into]);
+  if (!src || !dst) throw new HttpError(404, "Anúncio não encontrado");
+  if (src.source === "api") throw new HttpError(409, "Somente anúncios importados podem ser unificados");
+  if (dst.source !== "api") throw new HttpError(409, "O destino deve ser um anúncio sincronizado do Mercado Livre");
+  q.tx(() => {
+    if (src.product_id && dst.product_id && src.product_id !== dst.product_id) {
+      const sp = q.get<any>("SELECT * FROM products WHERE id=?", [src.product_id]);
+      q.run(`UPDATE products SET weight_g=COALESCE(weight_g,?), print_minutes=COALESCE(print_minutes,?), material=COALESCE(material,?), units_per_plate=COALESCE(units_per_plate,?), sku=COALESCE(sku,?), updated_at=? WHERE id=?`,
+        [sp.weight_g, sp.print_minutes, sp.material, sp.units_per_plate, sp.sku, now(), dst.product_id]);
+      if (!q.get("SELECT 1 FROM product_costs WHERE product_id=?", [dst.product_id])) q.run("UPDATE product_costs SET product_id=? WHERE product_id=?", [dst.product_id, src.product_id]);
+      q.run("UPDATE production_orders SET product_id=? WHERE product_id=?", [dst.product_id, src.product_id]);
+      q.run("UPDATE marketing_contents SET product_id=? WHERE product_id=?", [dst.product_id, src.product_id]);
+    }
+    q.run("UPDATE competitors SET our_listing_id=? WHERE our_listing_id=?", [into, from]);
+    q.run("UPDATE marketing_contents SET listing_id=? WHERE listing_id=?", [into, from]);
+    if (!q.get("SELECT 1 FROM listing_fee_overrides WHERE listing_id=?", [into])) q.run("UPDATE listing_fee_overrides SET listing_id=? WHERE listing_id=?", [into, from]);
+    q.run("DELETE FROM listing_fee_overrides WHERE listing_id=?", [from]);
+    q.run("UPDATE listings SET quality_score=COALESCE(quality_score,?), competition_status=COALESCE(competition_status,?) WHERE id=?", [src.quality_score, src.competition_status, into]);
+    q.run("DELETE FROM listings WHERE id=?", [from]);
+    if (src.product_id && src.product_id !== dst.product_id && !q.get("SELECT 1 FROM listings WHERE product_id=?", [src.product_id])
+      && !q.get("SELECT 1 FROM stock_movements WHERE product_id=?", [src.product_id])) q.run("DELETE FROM products WHERE id=?", [src.product_id]);
+  });
+  audit(req.user!.id, "listing.merge", "listing", from, { into }, req.ip);
+  res.json({ ok: true, id: into });
 }));
 v2.patch("/products/:id/specs", operator, ah((req, res) => {
   const b = z.object({ weight_g: z.number().positive().nullable().optional(), print_minutes: z.number().positive().nullable().optional(), material: z.string().max(20).nullable().optional(), units_per_plate: z.number().int().positive().nullable().optional(), sku: z.string().max(60).nullable().optional(), category: z.string().max(100).nullable().optional() }).parse(req.body);
@@ -742,6 +782,29 @@ v2.get("/imports/:id", viewer, (req, res) => {
 const PHOTO_PLAN = [
   "Foto principal em fundo branco", "Produto em uso", "Foto com dimensões", "Detalhes de acabamento", "Benefícios em destaque", "Variações de cores", "Embalagem",
 ];
+/** Análise de publicidade somente leitura: nunca altera campanhas. */
+v2.get("/marketing/ads", viewer, ah((req, res) => {
+  const { period = "30d", from, to } = req.query as Record<string, string>;
+  const r = resolvePeriod(period, from, to);
+  const camps = q.all<any>(`SELECT c.id, c.name, c.status, c.budget, c.import_id, SUM(d.prints) prints, SUM(d.clicks) clicks, SUM(d.cost) cost, SUM(d.total_amount) total_amount, SUM(d.units) units
+    FROM ads_campaigns c JOIN ads_campaign_daily d ON d.campaign_id=c.id WHERE d.date BETWEEN ? AND ? GROUP BY c.id ORDER BY cost DESC`, [r.from, r.to]);
+  const ranking = profitabilityRanking();
+  const avgMargin = (() => { const k = ranking.filter((p) => p.calc?.complete); return k.length ? k.reduce((s, p) => s + p.calc!.margin_pct, 0) / k.length : null; })();
+  const rows = camps.map((c) => {
+    const d = adsDerived(c);
+    const marginAfterAds = avgMargin !== null && c.total_amount ? (avgMargin / 100) * c.total_amount - c.cost : null;
+    return { ...c, ...d, cpc: c.clicks ? c.cost / c.clicks : null, acos_pct: c.total_amount ? (c.cost / c.total_amount) * 100 : null, roas: c.cost ? (c.total_amount ?? 0) / c.cost : null, margin_after_ads: marginAfterAds, source: c.import_id ? "importado" : "API" };
+  });
+  const totals = rows.reduce((s, c) => ({ prints: s.prints + (c.prints ?? 0), clicks: s.clicks + (c.clicks ?? 0), cost: s.cost + (c.cost ?? 0), revenue: s.revenue + (c.total_amount ?? 0) }), { prints: 0, clicks: 0, cost: 0, revenue: 0 });
+  res.json({
+    range: r, campaigns: rows,
+    totals: { ...totals, cpc: totals.clicks ? totals.cost / totals.clicks : null, acos_pct: totals.revenue ? (totals.cost / totals.revenue) * 100 : null, roas: totals.cost ? totals.revenue / totals.cost : null, ctr_pct: totals.prints ? (totals.clicks / totals.prints) * 100 : null },
+    avg_product_margin_pct: avgMargin,
+    daily: q.all("SELECT date, SUM(cost) cost, SUM(total_amount) revenue, SUM(clicks) clicks FROM ads_campaign_daily WHERE date BETWEEN ? AND ? GROUP BY date ORDER BY date", [r.from, r.to]),
+    note: "Somente leitura. Alterações de campanha devem ser feitas no Mercado Livre/Shopee após sua decisão.",
+  });
+}));
+
 v2.get("/marketing", viewer, (_req, res) => res.json(q.all("SELECT id, name, product_id, lab_product_id, listing_id, photo_plan, created_at, updated_at FROM marketing_contents ORDER BY updated_at DESC").map((m: any) => ({ ...m, photo_plan: json.parse(m.photo_plan, []) }))));
 v2.get("/marketing/:id", viewer, (req, res) => {
   const m = q.get<any>("SELECT * FROM marketing_contents WHERE id=?", [id(req.params.id)]);
@@ -799,29 +862,6 @@ v2.delete("/marketing/:id", operator, ah((req, res) => {
   q.run("DELETE FROM marketing_contents WHERE id=?", [id(req.params.id)]);
   res.json({ ok: true });
 }));
-/** Análise de publicidade somente leitura: nunca altera campanhas. */
-v2.get("/marketing/ads", viewer, ah((req, res) => {
-  const { period = "30d", from, to } = req.query as Record<string, string>;
-  const r = resolvePeriod(period, from, to);
-  const camps = q.all<any>(`SELECT c.id, c.name, c.status, c.budget, c.import_id, SUM(d.prints) prints, SUM(d.clicks) clicks, SUM(d.cost) cost, SUM(d.total_amount) total_amount, SUM(d.units) units
-    FROM ads_campaigns c JOIN ads_campaign_daily d ON d.campaign_id=c.id WHERE d.date BETWEEN ? AND ? GROUP BY c.id ORDER BY cost DESC`, [r.from, r.to]);
-  const ranking = profitabilityRanking();
-  const avgMargin = (() => { const k = ranking.filter((p) => p.calc?.complete); return k.length ? k.reduce((s, p) => s + p.calc!.margin_pct, 0) / k.length : null; })();
-  const rows = camps.map((c) => {
-    const d = adsDerived(c);
-    const marginAfterAds = avgMargin !== null && c.total_amount ? (avgMargin / 100) * c.total_amount - c.cost : null;
-    return { ...c, ...d, cpc: c.clicks ? c.cost / c.clicks : null, acos_pct: c.total_amount ? (c.cost / c.total_amount) * 100 : null, roas: c.cost ? (c.total_amount ?? 0) / c.cost : null, margin_after_ads: marginAfterAds, source: c.import_id ? "importado" : "API" };
-  });
-  const totals = rows.reduce((s, c) => ({ prints: s.prints + (c.prints ?? 0), clicks: s.clicks + (c.clicks ?? 0), cost: s.cost + (c.cost ?? 0), revenue: s.revenue + (c.total_amount ?? 0) }), { prints: 0, clicks: 0, cost: 0, revenue: 0 });
-  res.json({
-    range: r, campaigns: rows,
-    totals: { ...totals, cpc: totals.clicks ? totals.cost / totals.clicks : null, acos_pct: totals.revenue ? (totals.cost / totals.revenue) * 100 : null, roas: totals.cost ? totals.revenue / totals.cost : null, ctr_pct: totals.prints ? (totals.clicks / totals.prints) * 100 : null },
-    avg_product_margin_pct: avgMargin,
-    daily: q.all("SELECT date, SUM(cost) cost, SUM(total_amount) revenue, SUM(clicks) clicks FROM ads_campaign_daily WHERE date BETWEEN ? AND ? GROUP BY date ORDER BY date", [r.from, r.to]),
-    note: "Somente leitura. Alterações de campanha devem ser feitas no Mercado Livre/Shopee após sua decisão.",
-  });
-}));
-
 // ======================================================================
 // Mind AI
 // ======================================================================

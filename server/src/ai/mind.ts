@@ -9,7 +9,7 @@ import { getCostConfig, listChannels, profitabilityRanking } from "../services/c
 import { listingsCenter } from "../services/listingsIntel.ts";
 import { listMachines, listFilaments, productionPlanner } from "../services/factory.ts";
 import { listLab, listOpportunities } from "../services/rnd.ts";
-import { pendingData } from "../services/overview.ts";
+import { pendingData, overview } from "../services/overview.ts";
 import { localDate } from "../lib/dates.ts";
 
 /** Instruções estáveis (cacheáveis) do Mind AI. */
@@ -45,6 +45,8 @@ export function companySnapshot() {
     today: localDate(new Date()),
     empresa: getCompany(),
     relatorios_importados: periodReports(),
+    metricas_diarias_importadas: q.all("SELECT date, unique_visits, total_visits, intent_unique_visitors, intent_units, intent_value, sales_count, units, gross_sales FROM daily_metrics ORDER BY date DESC LIMIT 90"),
+    visao_geral_30d: (() => { try { const o = overview("30d"); return { fonte: o.data_source, kpis: o.kpis, variacoes: o.changes, operacional: o.operational, funil: o.funnel }; } catch { return null; } })(),
     meta: goalProgress(),
     simulacao_meta: goalSimulation(),
     vendas_e_anuncios_api: { kpis_30d: store.kpis_30d, variacoes: store.changes_vs_previous_30d, rentabilidade_30d: store.profitability_30d, crescimento_7d: store.growth_7d_vs_prev, queda_30d: store.decline_30d_vs_prev, sem_vendas_30d: store.active_without_sales_30d, campanhas: store.ads_campaigns },

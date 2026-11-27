@@ -61,23 +61,38 @@ function reportKpis(r: Range, channel?: string) {
   };
 }
 
-/** KPIs a partir das métricas diárias importadas (quando não há pedidos individuais no período). */
+/** KPIs das métricas diárias importadas, somente dos dias SEM pedidos individuais (evita dupla contagem). */
 function metricsKpis(r: Range, channel?: string) {
-  const rows = dailyMetrics(r.from, r.to, channel);
+  const rows = q.all<any>(
+    `SELECT * FROM daily_metrics d WHERE date >= ? AND date <= ? ${channel && channel !== "all" ? "AND channel = ?" : ""}
+     AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.status='paid' AND o.channel=d.channel AND ${LOCAL_DAY} = d.date) ORDER BY date`,
+    [r.from, r.to, ...(channel && channel !== "all" ? [channel] : [])],
+  );
   if (!rows.length) return null;
   const sum = (k: string) => rows.reduce((s, x) => s + (x[k] ?? 0), 0);
   const revenue = sum("gross_sales"), orders = sum("sales_count"), units = sum("units"), visits = sum("unique_visits");
   return {
     days: rows.length,
-    rows,
-    kpis: {
-      source: "daily_metrics", revenue, orders, units, avg_ticket: orders ? revenue / orders : null, avg_unit_price: units ? revenue / units : null,
-      visits, conversion_pct: visits ? (orders / visits) * 100 : null,
-      ad_spend: null, ad_revenue: null, roas: null, acos_pct: null, estimated_profit: null, contribution_margin_pct: null, profit_coverage_pct: null,
-    },
+    kpis: { revenue, orders, units, visits },
     funnel: {
       unique_visits: visits, intent_unique_visitors: sum("intent_unique_visitors"), intent_count: sum("intent_count"), intent_units: sum("intent_units"),
       intent_value: sum("intent_value"), sales_count: orders, units, gross_sales: revenue, unique_buyers: sum("unique_buyers"), likes: sum("likes"),
+    },
+  };
+}
+
+/** Soma às KPIs de pedidos as métricas diárias dos dias sem pedidos. Visitas já vêm de visits_daily (inclui as importadas). */
+function withMetrics(base: any, r: Range, channel?: string) {
+  const mk = metricsKpis(r, channel);
+  if (!mk) return { k: base, mk: null };
+  const revenue = base.revenue + mk.kpis.revenue, orders = base.orders + mk.kpis.orders, units = base.units + mk.kpis.units;
+  const visits = base.visits ?? mk.kpis.visits;
+  return {
+    mk,
+    k: {
+      ...base, source: base.orders > 0 ? "mixed" : "daily_metrics", revenue, orders, units,
+      avg_ticket: orders ? revenue / orders : null, avg_unit_price: units ? revenue / units : null,
+      visits, conversion_pct: visits ? (orders / visits) * 100 : null,
     },
   };
 }
@@ -93,20 +108,17 @@ export function overview(period: string, from?: string, to?: string, channel?: s
   let report: any = null;
   let funnel: any = null;
   let metricsDays = 0;
-  const mk = cur.orders === 0 ? metricsKpis(range, channel) : null;
-  if (mk) {
-    cur = { ...cur, ...mk.kpis };
-    funnel = mk.funnel;
-    metricsDays = mk.days;
-    dataSource = "daily_metrics";
-    if (before.orders === 0) {
-      const mp = metricsKpis(prev, channel);
-      if (mp) before = { ...before, ...mp.kpis };
-      else {
-        // sem métricas do período anterior: usa o anterior derivado do relatório agregado do mesmo período, se houver
-        const rk = reportKpis(range, channel);
-        if (rk && rk.report.date_from === range.from && rk.report.date_to === range.to) { before = { ...before, ...rk.previous }; report = rk.report; }
-      }
+  const m1 = withMetrics(cur, range, channel);
+  if (m1.mk) {
+    cur = m1.k;
+    funnel = m1.mk.funnel;
+    metricsDays = m1.mk.days;
+    dataSource = cur.source;
+    before = withMetrics(before, prev, channel).k;
+    if (dataSource === "daily_metrics" && before.orders === 0 && before.revenue === 0) {
+      // sem dados do período anterior: usa o anterior derivado do relatório agregado do mesmo período, se houver
+      const rk = reportKpis(range, channel);
+      if (rk && rk.report.date_from === range.from && rk.report.date_to === range.to) { before = { ...before, ...rk.previous }; report = rk.report; }
     }
   } else if (cur.orders === 0) {
     const rk = reportKpis(range, channel);
@@ -128,7 +140,7 @@ export function overview(period: string, from?: string, to?: string, channel?: s
     ad_spend: pct(cur.ad_spend, before.ad_spend),
   };
 
-  const center = listingsCenter({ days: Math.max(range.days, 7), channel });
+  const center = listingsCenter({ range, channel });
   const stock = q.get<{ units: number; products: number }>("SELECT COALESCE(SUM(stock_qty),0) units, COUNT(*) products FROM products WHERE made_to_order=0 AND stock_qty > 0")!;
   const occ = machineOccupancy(range.fromUtc, range.toUtc, range.days);
   const operational = {

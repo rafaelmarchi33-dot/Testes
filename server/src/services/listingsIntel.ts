@@ -1,4 +1,5 @@
 import { q, json } from "../db/index.ts";
+import { resolvePeriod, addDays, localDate, type Range } from "../lib/dates.ts";
 import { calculate, feesFor, getCostConfig } from "./costs3d.ts";
 import { getProductCosts, productionCost } from "./finance.ts";
 
@@ -11,10 +12,11 @@ export const CLASS_LABEL: Record<ListingClass, string> = {
  * Central de anúncios: visitas, vendas, conversão, margem e lucro por unidade calculados a partir dos dados
  * armazenados (API, importações ou relatório inicial). Nada é estimado sem custos/tarifas cadastrados.
  */
-export function listingsCenter(opts: { days?: number; channel?: string; search?: string; status?: string } = {}) {
-  const days = opts.days ?? 30;
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const sinceDay = since.slice(0, 10);
+export function listingsCenter(opts: { days?: number; range?: Range; channel?: string; search?: string; status?: string } = {}) {
+  // Intervalo explícito (filtro global) ou últimos N dias até hoje
+  const range = opts.range ?? resolvePeriod("custom", addDays(localDate(new Date()), -((opts.days ?? 30) - 1)), localDate(new Date()));
+  const days = range.days;
+  const since = range.fromUtc, until = range.toUtc;
   const where: string[] = [];
   const params: any[] = [];
   if (opts.channel && opts.channel !== "all") { where.push("l.channel = ?"); params.push(opts.channel); }
@@ -24,20 +26,21 @@ export function listingsCenter(opts: { days?: number; channel?: string; search?:
     `SELECT l.id, l.title, l.sku, l.price, l.original_price, l.available_quantity, l.sold_quantity, l.status, l.thumbnail, l.permalink, l.health, l.quality_score,
        l.competition_status, l.channel, l.source, l.product_id, l.listing_type_id, l.category_id, l.visits_total,
        p.name product_name, p.weight_g, p.print_minutes, COALESCE(p.material,'PLA') material, p.stock_qty, p.min_stock, p.made_to_order,
-       COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ?),0) units_period,
-       COALESCE((SELECT COUNT(DISTINCT oi.order_id) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ?),0) orders_period,
-       COALESCE((SELECT SUM(oi.quantity*oi.unit_price) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ?),0) revenue_period,
+       COALESCE((SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ? AND o.date_created < ?),0) units_period,
+       COALESCE((SELECT COUNT(DISTINCT oi.order_id) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ? AND o.date_created < ?),0) orders_period,
+       COALESCE((SELECT SUM(oi.quantity*oi.unit_price) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.listing_id=l.id AND o.status='paid' AND o.date_created >= ? AND o.date_created < ?),0) revenue_period,
        (SELECT AVG(oi.sale_fee) FROM order_items oi WHERE oi.listing_id=l.id AND oi.sale_fee IS NOT NULL) avg_sale_fee,
-       (SELECT SUM(visits) FROM visits_daily v WHERE v.scope=l.id AND v.date >= ?) visits_period
+       (SELECT SUM(visits) FROM visits_daily v WHERE v.scope=l.id AND v.date >= ? AND v.date <= ?) visits_period
      FROM listings l LEFT JOIN products p ON p.id=l.product_id ${where.length ? "WHERE " + where.join(" AND ") : ""}`,
-    [since, since, since, sinceDay, ...params],
+    [since, until, since, until, since, until, range.from, range.to, ...params],
   );
   const cfg = getCostConfig();
   const enriched = rows.map((l) => {
-    const visits: number | null = l.visits_period ?? l.visits_total ?? null;
+    // Conversão só com visitas do mesmo período; o total importado sem período é exibido, mas não entra na conversão.
+    const visits: number | null = l.visits_period ?? null;
     const conversion = visits && visits > 0 ? (l.orders_period / visits) * 100 : null;
     const unit = unitEconomics(l, cfg);
-    return { ...l, visits, conversion_pct: conversion, unit_profit: unit.profit, margin_pct: unit.margin, unit_cost_source: unit.source, unit_missing: unit.missing };
+    return { ...l, visits, visits_total_imported: l.visits_period == null ? l.visits_total : null, conversion_pct: conversion, unit_profit: unit.profit, margin_pct: unit.margin, unit_cost_source: unit.source, unit_missing: unit.missing };
   });
 
   // Referências da loja para classificar
@@ -55,7 +58,7 @@ export function listingsCenter(opts: { days?: number; channel?: string; search?:
     if (active && (l.available_quantity ?? 1) <= 0) { cls = "critico"; reasons.push("sem estoque disponível"); }
     else if (l.margin_pct !== null && l.margin_pct < 0) { cls = "critico"; reasons.push(`margem negativa (${l.margin_pct.toFixed(1)}%)`); }
     else if (active && l.visits && l.visits >= 50 && l.orders_period === 0) { cls = "critico"; reasons.push(`${l.visits} visitas sem vendas`); }
-    else if (l.visits === null && l.units_period === 0) { cls = "sem_dados"; reasons.push("sem visitas e vendas registradas no período"); }
+    else if ((l.visits === null || l.visits === 0) && l.units_period === 0) { cls = "sem_dados"; reasons.push("sem visitas e vendas registradas no período"); }
     else if (l.units_period > 0 && l.units_period >= top20Cut && (storeConv === null || (l.conversion_pct ?? 0) >= storeConv * 0.9)) { cls = "campeao"; reasons.push("entre os 20% que mais vendem"); }
     else if (storeConv !== null && l.conversion_pct !== null && l.conversion_pct >= storeConv * 1.2 && medianVisits !== null && (l.visits ?? 0) <= medianVisits) { cls = "escalavel"; reasons.push("conversão acima da loja com pouco tráfego — mais visitas tendem a gerar vendas"); }
     else if (storeConv !== null && l.conversion_pct !== null && medianVisits !== null && (l.visits ?? 0) >= medianVisits && l.conversion_pct < storeConv) { cls = "oportunidade"; reasons.push("tráfego relevante com conversão abaixo da loja — otimizar título, fotos e preço"); }
@@ -68,7 +71,7 @@ export function listingsCenter(opts: { days?: number; channel?: string; search?:
   });
   const counts = Object.fromEntries(Object.keys(CLASS_LABEL).map((k) => [k, classified.filter((l) => l.class === k).length]));
   return {
-    days, store_conversion_pct: storeConv, median_visits: medianVisits, counts,
+    days, from: range.from, to: range.to, store_conversion_pct: storeConv, median_visits: medianVisits, counts,
     rows: classified.sort((a, b) => b.revenue_period - a.revenue_period || (b.visits ?? 0) - (a.visits ?? 0)),
     priority: [...classified].filter((l) => l.status === "active").sort((a, b) => b.priority_score - a.priority_score).slice(0, 20),
   };

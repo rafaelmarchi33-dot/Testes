@@ -15,7 +15,7 @@ export default function Overview() {
   const { data: d, error, loading, reload } = useApi<any>(`/overview?${g.query}`);
   const compare = PERIODS.find((p) => p.value === g.period.period)?.compare ?? "";
   const k = d?.kpis, c = d?.changes, op = d?.operational, goal = d?.goal;
-  const src = d?.data_source === "report" ? "report" : d?.data_source === "orders" ? "orders" : d?.data_source === "daily_metrics" ? "daily_metrics" : undefined;
+  const src = d?.data_source === "report" ? "report" : d?.data_source === "orders" ? "orders" : d?.data_source === "daily_metrics" ? "daily_metrics" : d?.data_source === "mixed" ? "mixed" : undefined;
   const pendingKpi = (v: unknown, txt: string) => (v === null || v === undefined ? { value: "—", hint: txt } : null);
 
   return (
@@ -39,6 +39,11 @@ export default function Overview() {
             <Notice title="Métricas diárias importadas.">
               Sem pedidos individuais neste período: os indicadores vêm do relatório “Métricas do desempenho dos seus produtos” do Mercado Livre ({d.metrics_days} dia(s) com dados).
               Conversão = vendas ÷ visitas únicas (definição do ML). {d.previous_kpis.source === "report_derived" ? "O período anterior é derivado das variações do relatório agregado." : ""}
+            </Notice>
+          )}
+          {d.data_source === "mixed" && (
+            <Notice title="Pedidos + métricas diárias importadas.">
+              Dias com pedidos individuais usam os pedidos; {d.metrics_days} dia(s) sem pedidos usam o relatório de desempenho importado do Mercado Livre. Nenhum dia é contado duas vezes.
             </Notice>
           )}
           {d.data_source === "none" && (

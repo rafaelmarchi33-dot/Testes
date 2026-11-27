@@ -28,8 +28,7 @@ export default function Seller() {
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "revenue_period", dir: -1 });
   const [page, setPage] = useState(0);
-  const days = g.period.period === "7d" ? 7 : g.period.period === "90d" ? 90 : g.period.period === "today" ? 1 : 30;
-  const center = useApi<any>(`/listings-center?days=${days}&channel=${g.channel}&status=${status}&search=${encodeURIComponent(search)}`);
+  const center = useApi<any>(`/listings-center?${g.query}&status=${status}&search=${encodeURIComponent(search)}`);
   const ml = useApi<any>("/ml/status");
   const openId = params.get("id");
 
@@ -50,7 +49,7 @@ export default function Seller() {
     { key: "sku", header: "SKU", render: (l: any) => <span className="font-mono text-xs">{l.sku ?? "—"}</span> },
     { key: "price", header: sortH("price", "Preço"), align: "right" as const, render: (l: any) => <>{brl(l.price)}{l.original_price > l.price && <div className="text-[10px] text-ink-3 line-through">{brl(l.original_price)}</div>}</> },
     { key: "stock", header: sortH("available_quantity", "Estoque"), align: "right" as const, render: (l: any) => int(l.available_quantity) },
-    { key: "visits", header: sortH("visits", "Visitas"), align: "right" as const, render: (l: any) => int(l.visits) },
+    { key: "visits", header: sortH("visits", "Visitas"), align: "right" as const, render: (l: any) => (l.visits === null && l.visits_total_imported != null ? <span className="text-ink-3" title="Total importado sem período: não usado na conversão">{int(l.visits_total_imported)}*</span> : int(l.visits)) },
     { key: "sales", header: sortH("units_period", "Vendas"), align: "right" as const, render: (l: any) => int(l.units_period) },
     { key: "conv", header: sortH("conversion_pct", "Conversão"), align: "right" as const, render: (l: any) => pct(l.conversion_pct) },
     { key: "q", header: sortH("quality_score", "Qualidade"), align: "right" as const, render: (l: any) => (l.quality_score ?? (l.health !== null ? Math.round(l.health * 100) : null)) ?? "—" },
@@ -63,7 +62,7 @@ export default function Seller() {
   return (
     <>
       <PageHeader title="Mercado Livre Seller" subtitle="Central de anúncios, classificação de desempenho, ranking de prioridades e conexão oficial"
-        actions={<><Badge tone={st.tone}><st.icon className="size-3" /> {st.label}</Badge><ExportButtons path={`/listings-center/export?days=${days}&channel=${g.channel}${tab === "ranking" ? "&list=priority" : ""}`} /></>} />
+        actions={<><Badge tone={st.tone}><st.icon className="size-3" /> {st.label}</Badge><ExportButtons path={`/listings-center/export?${g.query}${tab === "ranking" ? "&list=priority" : ""}`} /></>} />
       <div className="mb-4"><Tabs value={tab} onChange={setTab} items={[{ value: "central", label: "Central de anúncios" }, { value: "ranking", label: "Ranking — 20 prioritários" }, { value: "conexao", label: "Conexão e sincronização" }]} /></div>
       <ErrorBox error={center.error} onRetry={center.reload} />
 
@@ -83,7 +82,7 @@ export default function Seller() {
             <div className="relative"><Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-3" /><Input className="w-full pl-8" placeholder="Título, SKU ou ID…" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
             <Select value={status} onChange={(e) => setStatus(e.target.value)}><option value="all">Todas situações</option><option value="active">Ativos</option><option value="paused">Pausados</option><option value="closed">Encerrados</option></Select>
             <Select value={cls} onChange={(e) => setCls(e.target.value)}><option value="all">Todas classes</option><option value="campeao">Campeões</option><option value="oportunidade">Oportunidades</option><option value="escalavel">Escaláveis</option><option value="subperformer">Subperformers</option><option value="critico">Críticos</option><option value="sem_dados">Sem dados</option></Select>
-            <span className="text-xs text-ink-3 sm:col-span-3">{rows.length} anúncio(s) · conversão da loja {pct(center.data?.store_conversion_pct)} · últimos {days} dias</span>
+            <span className="text-xs text-ink-3 sm:col-span-3">{rows.length} anúncio(s) · conversão da loja {pct(center.data?.store_conversion_pct)} · {center.data ? `${center.data.from.split("-").reverse().join("/")} a ${center.data.to.split("-").reverse().join("/")}` : ""}</span>
           </div>
           <div className="p-5">
             {center.loading && !center.data ? <Spinner /> : (
@@ -162,6 +161,27 @@ export default function Seller() {
   );
 }
 
+/** Unifica um anúncio importado com o anúncio real sincronizado (evita produto duplicado). */
+function MergeBox({ id, onDone }: { id: string; onDone: () => void }) {
+  const list = useApi<any>("/listings-center?period=90d");
+  const api_ = (list.data?.rows ?? []).filter((r: any) => r.source === "api");
+  const [into, setInto] = useState("");
+  const [open, setOpen] = useState(false);
+  if (!api_.length) return null;
+  return (
+    <div className="flex flex-wrap items-end gap-2 rounded-lg border border-info/30 bg-info-soft p-3 text-xs">
+      <Field label="Este anúncio já existe no Mercado Livre? Unifique com o sincronizado" className="min-w-0 flex-1">
+        <Select value={into} onChange={(e) => setInto(e.target.value)}><option value="">Selecione o anúncio real…</option>{api_.map((r: any) => <option key={r.id} value={r.id}>{r.id} · {r.title}</option>)}</Select>
+      </Field>
+      <Button size="sm" disabled={!into} onClick={() => setOpen(true)}>Unificar</Button>
+      <ConfirmDialog open={open} onClose={() => setOpen(false)} title="Unificar anúncios" confirmLabel="Unificar"
+        onConfirm={async () => { await api(`/listings/${encodeURIComponent(id)}/merge`, { body: { into, confirm: true } }); onDone(); }}>
+        Ficha técnica, custos, tarifas e concorrentes deste registro passam para {into}, e o registro importado é removido. Os dados históricos de relatórios importados são mantidos.
+      </ConfirmDialog>
+    </div>
+  );
+}
+
 function ListingModal({ id, onClose, canEdit, onSaved }: { id: string | null; onClose: () => void; canEdit: boolean; onSaved: () => void }) {
   const d = useApi<any>(id ? `/listings-center/${encodeURIComponent(id)}` : null, [id]);
   const [fees, setFees] = useState<any>({ fee_pct: null, fixed_fee: null, shipping_cost: null, ads_pct: null });
@@ -174,7 +194,9 @@ function ListingModal({ id, onClose, canEdit, onSaved }: { id: string | null; on
     setFees({ fee_pct: d.data.fee_override?.fee_pct ?? null, fixed_fee: d.data.fee_override?.fixed_fee ?? null, shipping_cost: d.data.fee_override?.shipping_cost ?? null, ads_pct: d.data.fee_override?.ads_pct ?? null });
     setSpecs({ weight_g: d.data.weight_g ?? null, print_minutes: d.data.print_minutes ?? null, material: d.data.material ?? "PLA" });
     setPrice(d.data.price ?? null);
-  }, [d.data]);
+    // inicializa só ao abrir outro anúncio: recargas não apagam o que o usuário está digitando
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.data?.id]);
   const l = d.data;
   const isApi = l && l.source === "api";
   return (
@@ -188,9 +210,10 @@ function ListingModal({ id, onClose, canEdit, onSaved }: { id: string | null; on
             <span className="font-mono">{l.id}</span><SourceTag kind={l.source} /><Badge tone={CLASS_TONE[l.class]}>{l.class_label}</Badge>
             {l.permalink && <a href={l.permalink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand hover:underline">Ver no Mercado Livre <ExternalLink className="size-3" /></a>}
           </div>
+          {l.source !== "api" && canEdit && <MergeBox id={l.id} onDone={() => { onSaved(); onClose(); }} />}
           {l.source === "initial_import" && <Notice>Anúncio identificado na importação inicial. O ID oficial do Mercado Livre não foi informado; ao conectar a conta, o anúncio real será sincronizado. Estoque exibido ({int(l.available_quantity)}) é o do anúncio, não o estoque físico.</Notice>}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[["Preço", brl(l.price)], ["Estoque exibido", int(l.available_quantity)], ["Visitas (30d)", int(l.visits)], ["Vendas (30d)", int(l.units_period)], ["Conversão", pct(l.conversion_pct)], ["Qualidade", l.quality_score ?? "—"], ["Margem", l.margin_pct === null ? "pendente" : pct(l.margin_pct)], ["Lucro/un.", l.unit_profit === null ? "—" : brl(l.unit_profit)]].map(([a, b]) => (
+            {[["Preço", brl(l.price)], ["Estoque exibido", int(l.available_quantity)], ["Visitas (30 dias)", int(l.visits)], ["Vendas (30 dias)", int(l.units_period)], ["Conversão", pct(l.conversion_pct)], ["Qualidade", l.quality_score ?? "—"], ["Margem", l.margin_pct === null ? "pendente" : pct(l.margin_pct)], ["Lucro/un.", l.unit_profit === null ? "—" : brl(l.unit_profit)]].map(([a, b]) => (
               <div key={a as string} className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-3">{a}</div><div className="font-semibold num">{b}</div></div>
             ))}
           </div>

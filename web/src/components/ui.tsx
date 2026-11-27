@@ -7,7 +7,7 @@ export const cx = (...c: unknown[]) => c.filter(Boolean).join(" ");
 
 export function Card({ children, className, title, action, subtitle, pad = true }: { children: ReactNode; className?: string; title?: ReactNode; subtitle?: ReactNode; action?: ReactNode; pad?: boolean }) {
   return (
-    <section className={cx("rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(16,16,32,0.04)] animate-in", className)}>
+    <section className={cx("min-w-0 rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(16,16,32,0.04)] animate-in", className)}>
       {(title || action) && (
         <header className="flex items-start justify-between gap-3 px-5 pt-4 pb-1">
           <div className="min-w-0">
@@ -109,7 +109,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
         <div className="mt-1.5 h-0.5 w-10 rounded-full bg-brand" />
         {subtitle && <p className="mt-1 text-sm text-ink-2">{subtitle}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -178,7 +178,7 @@ export function Modal({ open, onClose, title, children, footer, wide }: { open: 
 
 export function Tabs<T extends string>({ value, onChange, items }: { value: T; onChange: (v: T) => void; items: { value: T; label: ReactNode }[] }) {
   return (
-    <div className="inline-flex rounded-lg border border-line bg-surface-2 p-0.5 text-xs overflow-x-auto max-w-full">
+    <div className="inline-flex min-w-0 max-w-full overflow-x-auto rounded-lg border border-line bg-surface-2 p-0.5 text-xs">
       {items.map((i) => (
         <button key={i.value} onClick={() => onChange(i.value)} className={cx("rounded-md px-3 py-1.5 font-medium whitespace-nowrap transition", value === i.value ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink")}>
           {i.label}
@@ -195,7 +195,7 @@ export function PeriodFilter({ value, onChange }: { value: PeriodValue; onChange
   const [from, setFrom] = useState(value.from ?? "");
   const [to, setTo] = useState(value.to ?? "");
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
       <Tabs
         value={value.period}
         onChange={(p) => onChange({ period: p, from, to })}
@@ -286,7 +286,7 @@ export function Pending({ title = "Informação pendente", children, action }: {
 export function SourceTag({ kind }: { kind: "api" | "orders" | "report" | "initial_import" | "import" | "estimate" | "derived" | "manual" | string }) {
   const map: Record<string, [string, Tone]> = {
     api: ["API", "good"], orders: ["Pedidos", "good"], report: ["Relatório importado", "info"], initial_import: ["Importação inicial", "info"],
-    import: ["Importado", "info"], daily_metrics: ["Métricas diárias", "info"], estimate: ["Estimativa", "warn"], derived: ["Derivado", "neutral"], manual: ["Manual", "neutral"], report_derived: ["Derivado do relatório", "neutral"],
+    import: ["Importado", "info"], daily_metrics: ["Métricas diárias", "info"], mixed: ["Pedidos + métricas", "good"], estimate: ["Estimativa", "warn"], derived: ["Derivado", "neutral"], manual: ["Manual", "neutral"], report_derived: ["Derivado do relatório", "neutral"],
   };
   const [label, tone] = map[kind] ?? [kind, "neutral" as Tone];
   return <Badge tone={tone}>{label}</Badge>;
